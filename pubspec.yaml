@@ -19,7 +19,7 @@ dependencies:
   
   # UI関連
   cupertino_icons: ^1.0.2
-  intl: ^0.19.0
+  intl: ^0.20.2
   
   # 状態管理・ユーティリティ
   provider: ^6.0.5
