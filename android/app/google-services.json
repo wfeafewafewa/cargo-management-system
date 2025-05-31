@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "250171152700",
+    "project_id": "cargo-management-system-b61b8",
+    "storage_bucket": "cargo-management-system-b61b8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:250171152700:android:84bca261acc9e416b46639",
+        "android_client_info": {
+          "package_name": "com.example.cargo_management"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "250171152700-8a5678f83su52j4b4ctju3ja4md919kp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAAw_X2gRVbpximxsf2YrBDxEl7mZRVoA0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "250171152700-8a5678f83su52j4b4ctju3ja4md919kp.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

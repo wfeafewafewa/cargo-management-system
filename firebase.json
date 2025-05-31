@@ -1,0 +1,38 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "cargo-management-system-b61b8",
+          "appId": "1:250171152700:android:84bca261acc9e416b46639",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "cargo-management-system-b61b8",
+          "configurations": {
+            "android": "1:250171152700:android:84bca261acc9e416b46639",
+            "macos": "1:250171152700:ios:448b20d9355145b1b46639",
+            "web": "1:250171152700:web:9c2474b94a058529b46639",
+            "windows": "1:250171152700:web:580241c4f158c43bb46639"
+          }
+        }
+      }
+    }
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
