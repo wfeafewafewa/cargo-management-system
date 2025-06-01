@@ -145,7 +145,8 @@ class _NotificationDialogState extends State<NotificationDialog> {
                     title: Text(
                       data['title'] ?? '',
                       style: TextStyle(
-                        fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
+                        fontWeight:
+                            isRead ? FontWeight.normal : FontWeight.bold,
                       ),
                     ),
                     subtitle: Column(
@@ -247,7 +248,7 @@ class NotificationService {
         'createdAt': FieldValue.serverTimestamp(),
       });
     } catch (e) {
-      print('通知送信エラー: $e');
+      debugPrint('通知送信エラー: $e');
     }
   }
 
@@ -292,7 +293,8 @@ class NotificationService {
     await sendNotification(
       userId: driverId,
       title: '売上が発生しました',
-      message: '$deliveryLocation の配送で ¥${amount.toStringAsFixed(0)} の売上が発生しました',
+      message:
+          '$deliveryLocation の配送で ¥${amount.toStringAsFixed(0)} の売上が発生しました',
       type: 'payment_received',
       data: {'amount': amount},
     );
@@ -312,12 +314,11 @@ class NotificationService {
           .get();
 
       final batch = FirebaseFirestore.instance.batch();
-      
+
       for (final doc in adminsSnapshot.docs) {
-        final notificationRef = FirebaseFirestore.instance
-            .collection('notifications')
-            .doc();
-        
+        final notificationRef =
+            FirebaseFirestore.instance.collection('notifications').doc();
+
         batch.set(notificationRef, {
           'userId': doc.id,
           'title': title,
@@ -331,7 +332,7 @@ class NotificationService {
 
       await batch.commit();
     } catch (e) {
-      print('管理者通知送信エラー: $e');
+      debugPrint('管理者通知送信エラー: $e');
     }
   }
 }

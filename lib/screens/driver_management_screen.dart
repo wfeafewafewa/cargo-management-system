@@ -1,53 +1,330 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import '../widgets/notification_bell.dart';
 
-class DeliveryManagementScreen extends StatefulWidget {
-  const DeliveryManagementScreen({Key? key}) : super(key: key);
+class DriverManagementScreen extends StatefulWidget {
+  const DriverManagementScreen({Key? key}) : super(key: key);
 
   @override
-  State<DeliveryManagementScreen> createState() => _DeliveryManagementScreenState();
+  State<DriverManagementScreen> createState() => _DriverManagementScreenState();
 }
 
-class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
+class _DriverManagementScreenState extends State<DriverManagementScreen>
+    with TickerProviderStateMixin {
+  late TabController _tabController;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+
   String _selectedStatus = 'すべて';
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
-  
+  Map<String, dynamic> _stats = {};
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+    _setupAnimations();
+    _loadDriverStats();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _animationController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _setupAnimations() {
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOut,
+    ));
+  }
+
+  Future<void> _loadDriverStats() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final driversSnapshot =
+          await FirebaseFirestore.instance.collection('drivers').get();
+
+      final deliveriesSnapshot =
+          await FirebaseFirestore.instance.collection('deliveries').get();
+
+      final drivers = driversSnapshot.docs;
+      final deliveries = deliveriesSnapshot.docs;
+
+      final totalDrivers = drivers.length;
+      final activeDrivers =
+          drivers.where((d) => (d.data()['status'] as String?) == '稼働中').length;
+      final restingDrivers =
+          drivers.where((d) => (d.data()['status'] as String?) == '休憩中').length;
+      final offlineDrivers = drivers
+          .where((d) => (d.data()['status'] as String?) == 'オフライン')
+          .length;
+
+      // 今日の配送実績
+      final today = DateTime.now();
+      final todayStart = DateTime(today.year, today.month, today.day);
+      final todayDeliveries = deliveries.where((d) {
+        final completedAt = (d.data()['completedAt'] as Timestamp?)?.toDate();
+        return completedAt != null && completedAt.isAfter(todayStart);
+      }).length;
+
+      setState(() {
+        _stats = {
+          'totalDrivers': totalDrivers,
+          'activeDrivers': activeDrivers,
+          'restingDrivers': restingDrivers,
+          'offlineDrivers': offlineDrivers,
+          'todayDeliveries': todayDeliveries,
+          'utilization': totalDrivers > 0
+              ? ((activeDrivers / totalDrivers) * 100).round()
+              : 0,
+        };
+        _isLoading = false;
+      });
+
+      _animationController.forward();
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('データ読み込みエラー: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('配送案件管理'),
-        backgroundColor: Colors.blue,
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.people, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            const Text('ドライバー管理'),
+          ],
+        ),
+        backgroundColor: Colors.green.shade700,
         foregroundColor: Colors.white,
+        elevation: 0,
+        automaticallyImplyLeading: false,
         actions: [
           IconButton(
-            onPressed: () => _showBulkActions(),
-            icon: const Icon(Icons.checklist),
-            tooltip: '一括操作',
+            onPressed: _showDriverStats,
+            icon: Stack(
+              children: [
+                const Icon(Icons.analytics),
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: Colors.orange,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 12,
+                      minHeight: 12,
+                    ),
+                    child: Text(
+                      '${_stats['activeDrivers'] ?? 0}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 8,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            tooltip: '稼働状況',
           ),
           IconButton(
-            onPressed: () => _exportToCSV(),
-            icon: const Icon(Icons.file_download),
-            tooltip: 'CSVエクスポート',
+            onPressed: _loadDriverStats,
+            icon: const Icon(Icons.refresh),
+            tooltip: '更新',
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              switch (value) {
+                case 'export':
+                  _exportDriverData();
+                  break;
+                case 'import':
+                  _importDriverData();
+                  break;
+                case 'bulk_actions':
+                  _showBulkActions();
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'export',
+                child: ListTile(
+                  leading: Icon(Icons.file_download),
+                  title: Text('CSV出力'),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'import',
+                child: ListTile(
+                  leading: Icon(Icons.file_upload),
+                  title: Text('CSV取り込み'),
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'bulk_actions',
+                child: ListTile(
+                  leading: Icon(Icons.checklist),
+                  title: Text('一括操作'),
+                ),
+              ),
+            ],
+          ),
+        ],
+        bottom: TabBar(
+          controller: _tabController,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          indicatorColor: Colors.white,
+          tabs: const [
+            Tab(icon: Icon(Icons.people), text: 'ドライバー一覧'),
+            Tab(icon: Icon(Icons.analytics), text: 'パフォーマンス'),
+            Tab(icon: Icon(Icons.schedule), text: 'スケジュール'),
+          ],
+        ),
+      ),
+      body: FadeTransition(
+        opacity: _fadeAnimation,
+        child: Column(
+          children: [
+            if (_isLoading)
+              const LinearProgressIndicator()
+            else
+              _buildStatsBar(),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildDriverListTab(),
+                  _buildPerformanceTab(),
+                  _buildScheduleTab(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          FloatingActionButton(
+            onPressed: _showBulkStatusUpdate,
+            heroTag: "bulk_update",
+            child: const Icon(Icons.update),
+            backgroundColor: Colors.orange,
+            tooltip: '一括ステータス更新',
+          ),
+          const SizedBox(height: 16),
+          FloatingActionButton.extended(
+            onPressed: _showAddDriverDialog,
+            heroTag: "add_driver",
+            icon: const Icon(Icons.person_add),
+            label: const Text('新規ドライバー'),
+            backgroundColor: Colors.green,
           ),
         ],
       ),
-      body: Column(
+    );
+  }
+
+  Widget _buildStatsBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.green.shade50,
+        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildFilterSection(),
-          _buildStatsBar(),
-          Expanded(child: _buildDeliveryList()),
+          _buildStatItem(
+              '総数', _stats['totalDrivers'] ?? 0, Colors.blue, Icons.people),
+          _buildStatItem(
+              '稼働中', _stats['activeDrivers'] ?? 0, Colors.green, Icons.work),
+          _buildStatItem(
+              '休憩中', _stats['restingDrivers'] ?? 0, Colors.orange, Icons.pause),
+          _buildStatItem('オフライン', _stats['offlineDrivers'] ?? 0, Colors.grey,
+              Icons.offline_bolt),
+          _buildStatItem('稼働率', _stats['utilization'] ?? 0, Colors.purple,
+              Icons.trending_up,
+              suffix: '%'),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddDeliveryDialog,
-        icon: const Icon(Icons.add),
-        label: const Text('新規案件'),
-        backgroundColor: Colors.green,
-      ),
+    );
+  }
+
+  Widget _buildStatItem(String label, int value, Color color, IconData icon,
+      {String suffix = ''}) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: color, size: 20),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '$value$suffix',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDriverListTab() {
+    return Column(
+      children: [
+        _buildFilterSection(),
+        Expanded(child: _buildDriverList()),
+      ],
     );
   }
 
@@ -55,10 +332,10 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.grey.shade50,
+        color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -72,12 +349,24 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: '配送先、集荷先で検索...',
+                    hintText: 'ドライバー名、電話番号で検索...',
                     prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() {
+                                _searchQuery = '';
+                              });
+                            },
+                          )
+                        : null,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
                   ),
                   onChanged: (value) {
                     setState(() {
@@ -91,12 +380,12 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 decoration: BoxDecoration(
                   border: Border.all(color: Colors.grey.shade300),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: DropdownButton<String>(
                   value: _selectedStatus,
                   underline: const SizedBox(),
-                  items: ['すべて', '待機中', '配送中', '完了', 'キャンセル']
+                  items: ['すべて', '稼働中', '休憩中', 'オフライン']
                       .map((status) => DropdownMenuItem(
                             value: status,
                             child: Text(status),
@@ -116,12 +405,11 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                _buildQuickFilterChip('今日', () => _filterByDate(DateTime.now())),
-                _buildQuickFilterChip('昨日', () => _filterByDate(DateTime.now().subtract(const Duration(days: 1)))),
-                _buildQuickFilterChip('今週', () => _filterByWeek()),
-                _buildQuickFilterChip('今月', () => _filterByMonth()),
-                _buildQuickFilterChip('高額案件', () => _filterByHighValue()),
-                _buildQuickFilterChip('緊急', () => _filterByUrgent()),
+                _buildFilterChip('新規ドライバー', () => _filterByNew()),
+                _buildFilterChip('ベテラン', () => _filterByVeteran()),
+                _buildFilterChip('高評価', () => _filterByHighRating()),
+                _buildFilterChip('要注意', () => _filterByAlert()),
+                _buildFilterChip('フィルタークリア', () => _clearFilters()),
               ],
             ),
           ),
@@ -130,105 +418,68 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
     );
   }
 
-  Widget _buildQuickFilterChip(String label, VoidCallback onTap) {
+  Widget _buildFilterChip(String label, VoidCallback onTap) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: ActionChip(
         label: Text(label),
         onPressed: onTap,
-        backgroundColor: Colors.blue.shade50,
+        backgroundColor: Colors.green.shade50,
+        side: BorderSide(color: Colors.green.shade200),
       ),
     );
   }
 
-  Widget _buildStatsBar() {
+  Widget _buildDriverList() {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('deliveries').snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const SizedBox();
-
-        final docs = snapshot.data!.docs;
-        final total = docs.length;
-        final pending = docs.where((d) => 
-            ((d.data() as Map<String, dynamic>)['status'] as String?) == '待機中').length;
-        final inProgress = docs.where((d) => 
-            ((d.data() as Map<String, dynamic>)['status'] as String?) == '配送中').length;
-        final completed = docs.where((d) => 
-            ((d.data() as Map<String, dynamic>)['status'] as String?) == '完了').length;
-
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.blue.shade50,
-            border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildStatItem('総案件', total, Colors.blue),
-              _buildStatItem('待機中', pending, Colors.orange),
-              _buildStatItem('配送中', inProgress, Colors.green),
-              _buildStatItem('完了', completed, Colors.purple),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildStatItem(String label, int count, Color color) {
-    return Column(
-      children: [
-        Text(
-          count.toString(),
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
-        ),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDeliveryList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: _buildQuery().snapshots(),
+      stream: _buildDriverQuery().snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('ドライバー情報を読み込み中...'),
+              ],
+            ),
+          );
         }
 
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return _buildEmptyState();
+          return _buildEmptyDriverList();
         }
 
-        final filteredDocs = _filterDocuments(snapshot.data!.docs);
+        final filteredDocs = _filterDrivers(snapshot.data!.docs);
 
         if (filteredDocs.isEmpty) {
-          return _buildEmptyState();
+          return _buildEmptyDriverList(isFiltered: true);
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: filteredDocs.length,
-          itemBuilder: (context, index) {
-            final doc = filteredDocs[index];
-            final data = doc.data() as Map<String, dynamic>;
-            return _buildDeliveryCard(doc.id, data);
-          },
+        return RefreshIndicator(
+          onRefresh: _loadDriverStats,
+          child: ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: filteredDocs.length,
+            itemBuilder: (context, index) {
+              final doc = filteredDocs[index];
+              final data = doc.data() as Map<String, dynamic>;
+              return AnimatedContainer(
+                duration: Duration(milliseconds: 300 + (index * 50)),
+                curve: Curves.easeInOut,
+                child: _buildDriverCard(doc.id, data),
+              );
+            },
+          ),
         );
       },
     );
   }
 
-  Query _buildQuery() {
+  Query _buildDriverQuery() {
     Query query = FirebaseFirestore.instance
-        .collection('deliveries')
+        .collection('drivers')
         .orderBy('createdAt', descending: true);
 
     if (_selectedStatus != 'すべて') {
@@ -238,32 +489,39 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
     return query;
   }
 
-  List<QueryDocumentSnapshot> _filterDocuments(List<QueryDocumentSnapshot> docs) {
+  List<QueryDocumentSnapshot> _filterDrivers(List<QueryDocumentSnapshot> docs) {
     if (_searchQuery.isEmpty) return docs;
 
     return docs.where((doc) {
       final data = doc.data() as Map<String, dynamic>;
-      final pickup = (data['pickupLocation'] as String? ?? '').toLowerCase();
-      final delivery = (data['deliveryLocation'] as String? ?? '').toLowerCase();
+      final name = (_safeString(data['name']) ?? '').toLowerCase();
+      final phone = (_safeString(data['phone']) ?? '').toLowerCase();
       final query = _searchQuery.toLowerCase();
-      
-      return pickup.contains(query) || delivery.contains(query);
+
+      return name.contains(query) || phone.contains(query);
     }).toList();
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyDriverList({bool isFiltered = false}) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.inbox_outlined,
-            size: 80,
-            color: Colors.grey.shade400,
+          Container(
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              isFiltered ? Icons.search_off : Icons.people_outlined,
+              size: 80,
+              color: Colors.green.shade400,
+            ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
           Text(
-            '配送案件がありません',
+            isFiltered ? '該当するドライバーがいません' : 'ドライバーが登録されていません',
             style: TextStyle(
               fontSize: 18,
               color: Colors.grey.shade600,
@@ -272,19 +530,20 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            '新規案件を追加してください',
+            isFiltered ? 'フィルター条件を変更してください' : '新しいドライバーを登録してください',
             style: TextStyle(
               color: Colors.grey.shade500,
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 32),
           ElevatedButton.icon(
-            onPressed: _showAddDeliveryDialog,
-            icon: const Icon(Icons.add),
-            label: const Text('新規案件を追加'),
+            onPressed: isFiltered ? _clearFilters : _showAddDriverDialog,
+            icon: Icon(isFiltered ? Icons.clear : Icons.person_add),
+            label: Text(isFiltered ? 'フィルタークリア' : '新規ドライバー登録'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
               foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
           ),
         ],
@@ -292,109 +551,173 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
     );
   }
 
-  Widget _buildDeliveryCard(String deliveryId, Map<String, dynamic> data) {
-    final status = data['status'] as String? ?? '不明';
-    final priority = data['priority'] as String? ?? 'normal';
-    final isUrgent = priority == 'urgent';
-    
+  Widget _buildDriverCard(String driverId, Map<String, dynamic> data) {
+    final status = _safeString(data['status']) ?? 'オフライン';
+    final name = _safeString(data['name']) ?? 'N/A';
+    final phone = _safeString(data['phone']) ?? 'N/A';
+    final vehicle = _safeString(data['vehicle']) ?? 'N/A';
+    final currentDeliveries = _safeNumber(data['currentDeliveries']) ?? 0;
+    final rating = _safeNumber(data['rating']) ?? 0.0;
+    final joinDate = data['createdAt'] as Timestamp?;
+
+    final statusColor = _getStatusColor(status);
+    final isAlert = rating < 3.0 || currentDeliveries > 10;
+
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: isUrgent ? 4 : 2,
+      margin: const EdgeInsets.only(bottom: 16),
+      elevation: isAlert ? 4 : 2,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: isUrgent 
-            ? const BorderSide(color: Colors.red, width: 2)
+        borderRadius: BorderRadius.circular(16),
+        side: isAlert
+            ? const BorderSide(color: Colors.orange, width: 2)
             : BorderSide.none,
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _showDeliveryDetails(deliveryId, data),
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _showDriverDetails(driverId, data),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  _buildStatusBadge(status),
-                  if (isUrgent) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: const Text(
-                        '緊急',
+                  Container(
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.1),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: statusColor, width: 2),
+                    ),
+                    child: Center(
+                      child: Text(
+                        name.isNotEmpty ? name[0].toUpperCase() : 'D',
                         style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
+                          fontSize: 24,
                           fontWeight: FontWeight.bold,
+                          color: statusColor,
                         ),
                       ),
                     ),
-                  ],
-                  const Spacer(),
-                  Text(
-                    '¥${_formatNumber(data['fee'] ?? 0)}',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green,
-                    ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const Icon(Icons.location_on, color: Colors.red, size: 16),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 16),
                   Expanded(
-                    child: Text(
-                      data['pickupLocation'] as String? ?? 'N/A',
-                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              name,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            _buildStatusBadge(status),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(Icons.phone,
+                                size: 16, color: Colors.grey.shade600),
+                            const SizedBox(width: 4),
+                            Text(
+                              phone,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  const Icon(Icons.flag, color: Colors.green, size: 16),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      data['deliveryLocation'] as String? ?? 'N/A',
-                      style: const TextStyle(fontWeight: FontWeight.w500),
+                  if (isAlert)
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade100,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.warning,
+                        color: Colors.orange.shade700,
+                        size: 20,
+                      ),
                     ),
-                  ),
                 ],
               ),
-              const SizedBox(height: 8),
-              if (data['driverName'] != null) ...[
-                Row(
+
+              const SizedBox(height: 16),
+
+              // 詳細情報
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
                   children: [
-                    const Icon(Icons.person, color: Colors.blue, size: 16),
-                    const SizedBox(width: 4),
-                    Text(
-                      '担当: ${data['driverName']}',
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    Row(
+                      children: [
+                        _buildInfoItem('車両', vehicle, Icons.directions_car),
+                        const SizedBox(width: 24),
+                        _buildInfoItem('担当案件', '${currentDeliveries.round()}件',
+                            Icons.local_shipping),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        _buildInfoItem(
+                            '評価', '${rating.toStringAsFixed(1)}★', Icons.star),
+                        const SizedBox(width: 24),
+                        _buildInfoItem(
+                            '入社',
+                            joinDate != null
+                                ? _formatDate(joinDate.toDate())
+                                : 'N/A',
+                            Icons.calendar_today),
+                      ],
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-              ],
+              ),
+
+              const SizedBox(height: 16),
+
+              // アクションボタン
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      _formatTimestamp(data['createdAt']),
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    child: OutlinedButton.icon(
+                      onPressed: () => _showDriverDetails(driverId, data),
+                      icon: const Icon(Icons.info_outline, size: 18),
+                      label: const Text('詳細'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.blue,
+                        side: BorderSide(color: Colors.blue.shade300),
+                      ),
                     ),
                   ),
-                  ..._buildActionButtons(deliveryId, data),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => _toggleDriverStatus(driverId, status),
+                      icon: Icon(_getStatusIcon(status), size: 18),
+                      label: Text(_getStatusToggleText(status)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: statusColor,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -404,249 +727,213 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
     );
   }
 
-  Widget _buildStatusBadge(String status) {
-    Color color;
-    Color bgColor;
-    
-    switch (status) {
-      case '待機中':
-        color = Colors.orange;
-        bgColor = Colors.orange.shade100;
-        break;
-      case '配送中':
-        color = Colors.blue;
-        bgColor = Colors.blue.shade100;
-        break;
-      case '完了':
-        color = Colors.green;
-        bgColor = Colors.green.shade100;
-        break;
-      case 'キャンセル':
-        color = Colors.red;
-        bgColor = Colors.red.shade100;
-        break;
-      default:
-        color = Colors.grey;
-        bgColor = Colors.grey.shade100;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        status,
-        style: TextStyle(
-          color: color,
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-
-  List<Widget> _buildActionButtons(String deliveryId, Map<String, dynamic> data) {
-    final status = data['status'] as String?;
-    
-    if (status == '待機中') {
-      return [
-        IconButton(
-          onPressed: () => _showAssignDriverDialog(deliveryId, data),
-          icon: const Icon(Icons.person_add, color: Colors.green),
-          tooltip: 'ドライバー割り当て',
-        ),
-      ];
-    } else if (status == '配送中') {
-      return [
-        IconButton(
-          onPressed: () => _completeDelivery(deliveryId, data),
-          icon: const Icon(Icons.check_circle, color: Colors.blue),
-          tooltip: '完了',
-        ),
-      ];
-    }
-    
-    return [
-      IconButton(
-        onPressed: () => _showEditDeliveryDialog(deliveryId, data),
-        icon: const Icon(Icons.edit, color: Colors.grey),
-        tooltip: '編集',
-      ),
-    ];
-  }
-
-  void _showAddDeliveryDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => _DeliveryFormDialog(),
-    );
-  }
-
-  void _showEditDeliveryDialog(String deliveryId, Map<String, dynamic> data) {
-    showDialog(
-      context: context,
-      builder: (context) => _DeliveryFormDialog(
-        deliveryId: deliveryId,
-        initialData: data,
-      ),
-    );
-  }
-
-  void _showAssignDriverDialog(String deliveryId, Map<String, dynamic> deliveryData) {
-    showDialog(
-      context: context,
-      builder: (context) => _DriverAssignDialog(
-        deliveryId: deliveryId,
-        deliveryData: deliveryData,
-      ),
-    );
-  }
-
-  void _showDeliveryDetails(String deliveryId, Map<String, dynamic> data) {
-    showDialog(
-      context: context,
-      builder: (context) => _DeliveryDetailsDialog(
-        deliveryId: deliveryId,
-        data: data,
-      ),
-    );
-  }
-
-  Future<void> _completeDelivery(String deliveryId, Map<String, dynamic> data) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('配送完了'),
-        content: const Text('この配送案件を完了としてマークしますか？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('キャンセル'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-            child: const Text('完了'),
+  Widget _buildInfoItem(String label, String value, IconData icon) {
+    return Expanded(
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: Colors.grey.shade600),
+          const SizedBox(width: 6),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
-
-    if (confirmed == true) {
-      try {
-        final batch = FirebaseFirestore.instance.batch();
-
-        // 配送を完了状態に更新
-        final deliveryRef = FirebaseFirestore.instance.collection('deliveries').doc(deliveryId);
-        batch.update(deliveryRef, {
-          'status': '完了',
-          'completedAt': FieldValue.serverTimestamp(),
-        });
-
-        // 売上を自動生成
-        final salesRef = FirebaseFirestore.instance.collection('sales').doc();
-        batch.set(salesRef, {
-          'deliveryId': deliveryId,
-          'driverId': data['driverId'] as String?,
-          'driverName': data['driverName'] as String?,
-          'amount': (data['fee'] as num?)?.toDouble() ?? 0.0,
-          'pickupLocation': data['pickupLocation'] as String?,
-          'deliveryLocation': data['deliveryLocation'] as String?,
-          'completedAt': FieldValue.serverTimestamp(),
-          'month': DateTime.now().month,
-          'year': DateTime.now().year,
-        });
-
-        await batch.commit();
-
-        // 通知送信
-        await NotificationService.notifyAllAdmins(
-          title: '配送が完了しました',
-          message: '${data['driverName'] as String? ?? 'ドライバー'} が ${data['deliveryLocation'] as String? ?? '配送先'} への配送を完了しました',
-          type: 'delivery_completed',
-          data: {'deliveryId': deliveryId},
-        );
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('配送完了として処理しました')),
-        );
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('エラー: $e')),
-        );
-      }
-    }
   }
 
-  // フィルター機能
-  void _filterByDate(DateTime date) {
-    // 実装: 特定日付でフィルター
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${date.year}/${date.month}/${date.day}でフィルタリング')),
+  Widget _buildStatusBadge(String status) {
+    final color = _getStatusColor(status);
+    final icon = _getStatusIcon(status);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 12),
+          const SizedBox(width: 4),
+          Text(
+            status,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  void _filterByWeek() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('今週の案件でフィルタリング')),
+  Widget _buildPerformanceTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          _buildPerformanceOverview(),
+          const SizedBox(height: 16),
+          _buildTopPerformers(),
+          const SizedBox(height: 16),
+          _buildPerformanceMetrics(),
+        ],
+      ),
     );
   }
 
-  void _filterByMonth() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('今月の案件でフィルタリング')),
-    );
-  }
-
-  void _filterByHighValue() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('高額案件でフィルタリング（5000円以上）')),
-    );
-  }
-
-  void _filterByUrgent() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('緊急案件でフィルタリング')),
-    );
-  }
-
-  void _showBulkActions() {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
+  Widget _buildPerformanceOverview() {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ListTile(
-              leading: const Icon(Icons.check_circle),
-              title: const Text('選択した案件を一括完了'),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('一括完了機能は準備中です')),
-                );
-              },
+            Row(
+              children: [
+                Icon(Icons.analytics, color: Colors.green.shade700),
+                const SizedBox(width: 8),
+                const Text(
+                  'パフォーマンス概要',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.person_add),
-              title: const Text('選択した案件にドライバー一括割り当て'),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('一括割り当て機能は準備中です')),
-                );
-              },
+            const SizedBox(height: 16),
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 1.5,
+              children: [
+                _buildPerformanceCard(
+                  '今日の配送',
+                  '${_stats['todayDeliveries'] ?? 0}件',
+                  Icons.today,
+                  Colors.blue,
+                ),
+                _buildPerformanceCard(
+                  '平均評価',
+                  '4.2★',
+                  Icons.star,
+                  Colors.orange,
+                ),
+                _buildPerformanceCard(
+                  '完了率',
+                  '94%',
+                  Icons.check_circle,
+                  Colors.green,
+                ),
+                _buildPerformanceCard(
+                  '稼働率',
+                  '${_stats['utilization'] ?? 0}%',
+                  Icons.trending_up,
+                  Colors.purple,
+                ),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.delete),
-              title: const Text('選択した案件を一括削除'),
-              onTap: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('一括削除機能は準備中です')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPerformanceCard(
+      String title, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color, size: 32),
+          const SizedBox(height: 8),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.grey,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopPerformers() {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'トップパフォーマー',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('drivers')
+                  .orderBy('rating', descending: true)
+                  .limit(5)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                return Column(
+                  children: snapshot.data!.docs.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final doc = entry.value;
+                    final data = doc.data() as Map<String, dynamic>;
+
+                    return _buildTopPerformerItem(
+                      index + 1,
+                      _safeString(data['name']) ?? 'N/A',
+                      (_safeNumber(data['rating']) ?? 0).toDouble(),
+                      _safeNumber(data['currentDeliveries']) ?? 0,
+                    );
+                  }).toList(),
                 );
               },
             ),
@@ -656,85 +943,489 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen> {
     );
   }
 
-  void _exportToCSV() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('CSVエクスポート機能は準備中です')),
+  Widget _buildTopPerformerItem(
+      int rank, String name, double rating, num deliveries) {
+    final medalColor = rank == 1
+        ? Colors.amber
+        : rank == 2
+            ? Colors.grey
+            : rank == 3
+                ? Colors.brown
+                : Colors.grey.shade400;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color:
+            rank <= 3 ? medalColor.withValues(alpha: 0.1) : Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: rank <= 3
+              ? medalColor.withValues(alpha: 0.3)
+              : Colors.grey.shade200,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: medalColor,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                '$rank',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 16,
+                  ),
+                ),
+                Text(
+                  '${deliveries.round()}件配送 • ${rating.toStringAsFixed(1)}★',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  String _formatNumber(int number) {
-    return number.toString().replaceAllMapped(
-      RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]},',
+  Widget _buildPerformanceMetrics() {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '詳細メトリクス',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            _buildMetricRow('総配送件数', '1,234件'),
+            _buildMetricRow('平均配送時間', '45分'),
+            _buildMetricRow('顧客満足度', '4.3/5.0'),
+            _buildMetricRow('事故率', '0.1%'),
+            _buildMetricRow('遅延率', '2.3%'),
+          ],
+        ),
+      ),
     );
   }
 
-  String _formatTimestamp(Timestamp? timestamp) {
-    if (timestamp == null) return '';
-    
-    final date = timestamp.toDate();
-    final now = DateTime.now();
-    final difference = now.difference(date);
+  Widget _buildMetricRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontSize: 14, color: Colors.grey),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-    if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}分前';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}時間前';
-    } else {
-      return '${difference.inDays}日前';
+  Widget _buildScheduleTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          _buildScheduleOverview(),
+          const SizedBox(height: 16),
+          _buildScheduleCalendar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScheduleOverview() {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.schedule, color: Colors.blue.shade700),
+                const SizedBox(width: 8),
+                const Text(
+                  'スケジュール管理',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'スケジュール機能は準備中です。\n今後のアップデートで追加予定です。',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScheduleCalendar() {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        height: 300,
+        padding: const EdgeInsets.all(20),
+        child: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.calendar_today, size: 64, color: Colors.grey),
+              SizedBox(height: 16),
+              Text(
+                'カレンダー機能',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
+              Text(
+                '（実装予定）',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // アクション関数
+  void _showAddDriverDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => _DriverFormDialog(),
+    );
+  }
+
+  void _showDriverDetails(String driverId, Map<String, dynamic> data) {
+    showDialog(
+      context: context,
+      builder: (context) => _DriverDetailsDialog(
+        driverId: driverId,
+        data: data,
+      ),
+    );
+  }
+
+  void _showDriverStats() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('ドライバー稼働状況'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildStatRow('総ドライバー数', '${_stats['totalDrivers'] ?? 0}人'),
+            _buildStatRow('稼働中', '${_stats['activeDrivers'] ?? 0}人'),
+            _buildStatRow('休憩中', '${_stats['restingDrivers'] ?? 0}人'),
+            _buildStatRow('オフライン', '${_stats['offlineDrivers'] ?? 0}人'),
+            _buildStatRow('稼働率', '${_stats['utilization'] ?? 0}%'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('閉じる'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label),
+          Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleDriverStatus(
+      String driverId, String currentStatus) async {
+    String newStatus;
+    switch (currentStatus) {
+      case '稼働中':
+        newStatus = '休憩中';
+        break;
+      case '休憩中':
+        newStatus = 'オフライン';
+        break;
+      default:
+        newStatus = '稼働中';
     }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('ステータス変更'),
+        content: Text('ドライバーのステータスを「$newStatus」に変更しますか？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('変更'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('drivers')
+            .doc(driverId)
+            .update({
+          'status': newStatus,
+          'statusUpdatedAt': FieldValue.serverTimestamp(),
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('ステータスを「$newStatus」に変更しました'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        _loadDriverStats();
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('エラー: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showBulkStatusUpdate() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('一括ステータス更新'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('全ドライバーのステータスを一括で変更します。'),
+            SizedBox(height: 16),
+            Text('実装予定の機能です。'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('閉じる'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showBulkActions() {
+    _showComingSoon('一括操作');
+  }
+
+  void _exportDriverData() {
+    _showComingSoon('CSV出力');
+  }
+
+  void _importDriverData() {
+    _showComingSoon('CSV取り込み');
+  }
+
+  void _filterByNew() {
+    _showComingSoon('新規ドライバーフィルター');
+  }
+
+  void _filterByVeteran() {
+    _showComingSoon('ベテランフィルター');
+  }
+
+  void _filterByHighRating() {
+    _showComingSoon('高評価フィルター');
+  }
+
+  void _filterByAlert() {
+    _showComingSoon('要注意フィルター');
+  }
+
+  void _clearFilters() {
+    setState(() {
+      _selectedStatus = 'すべて';
+      _searchQuery = '';
+      _searchController.clear();
+    });
+  }
+
+  void _showComingSoon(String feature) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$feature機能は準備中です'),
+        backgroundColor: Colors.orange,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // ヘルパーメソッド
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case '稼働中':
+        return Colors.green;
+      case '休憩中':
+        return Colors.orange;
+      case 'オフライン':
+        return Colors.grey;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status) {
+      case '稼働中':
+        return Icons.work;
+      case '休憩中':
+        return Icons.pause;
+      case 'オフライン':
+        return Icons.offline_bolt;
+      default:
+        return Icons.help;
+    }
+  }
+
+  String _getStatusToggleText(String status) {
+    switch (status) {
+      case '稼働中':
+        return '休憩';
+      case '休憩中':
+        return 'オフライン';
+      default:
+        return '稼働開始';
+    }
+  }
+
+  String? _safeString(dynamic value) {
+    if (value == null) return null;
+    if (value is String) return value.isEmpty ? null : value;
+    if (value is Map || value is List) return null;
+    return value.toString();
+  }
+
+  num _safeNumber(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value;
+    if (value is String) {
+      final parsed = num.tryParse(value);
+      return parsed ?? 0;
+    }
+    return 0;
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.year}/${date.month}/${date.day}';
   }
 }
 
-// 配送案件フォームダイアログ
-class _DeliveryFormDialog extends StatefulWidget {
-  final String? deliveryId;
+// ドライバー登録・編集フォーム
+class _DriverFormDialog extends StatefulWidget {
+  final String? driverId;
   final Map<String, dynamic>? initialData;
 
-  const _DeliveryFormDialog({
-    this.deliveryId,
+  const _DriverFormDialog({
+    this.driverId,
     this.initialData,
   });
 
   @override
-  State<_DeliveryFormDialog> createState() => _DeliveryFormDialogState();
+  State<_DriverFormDialog> createState() => _DriverFormDialogState();
 }
 
-class _DeliveryFormDialogState extends State<_DeliveryFormDialog> {
+class _DriverFormDialogState extends State<_DriverFormDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _pickupController = TextEditingController();
-  final _deliveryController = TextEditingController();
-  final _feeController = TextEditingController();
-  final _notesController = TextEditingController();
-  final _customerNameController = TextEditingController();
-  final _customerPhoneController = TextEditingController();
-  
-  String _priority = 'normal';
-  DateTime? _deadline;
+  final _nameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _vehicleController = TextEditingController();
+  final _licenseController = TextEditingController();
+
+  String _status = '稼働中';
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
     if (widget.initialData != null) {
-      _pickupController.text = widget.initialData!['pickupLocation'] as String? ?? '';
-      _deliveryController.text = widget.initialData!['deliveryLocation'] as String? ?? '';
-      _feeController.text = ((widget.initialData!['fee'] as num?) ?? 0).toString();
-      _notesController.text = widget.initialData!['notes'] as String? ?? '';
-      _customerNameController.text = widget.initialData!['customerName'] as String? ?? '';
-      _customerPhoneController.text = widget.initialData!['customerPhone'] as String? ?? '';
-      _priority = widget.initialData!['priority'] as String? ?? 'normal';
-      
-      if (widget.initialData!['deadline'] != null) {
-        _deadline = (widget.initialData!['deadline'] as Timestamp).toDate();
-      }
+      final data = widget.initialData!;
+      _nameController.text = data['name'] as String? ?? '';
+      _phoneController.text = data['phone'] as String? ?? '';
+      _emailController.text = data['email'] as String? ?? '';
+      _vehicleController.text = data['vehicle'] as String? ?? '';
+      _licenseController.text = data['license'] as String? ?? '';
+      _status = data['status'] as String? ?? '稼働中';
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.deliveryId == null ? '新規配送案件' : '配送案件編集'),
+      title: Text(widget.driverId == null ? '新規ドライバー登録' : 'ドライバー情報編集'),
       content: SizedBox(
         width: double.maxFinite,
         child: Form(
@@ -744,98 +1435,71 @@ class _DeliveryFormDialogState extends State<_DeliveryFormDialog> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextFormField(
-                  controller: _pickupController,
+                  controller: _nameController,
                   decoration: const InputDecoration(
-                    labelText: '集荷先 *',
-                    prefixIcon: Icon(Icons.location_on),
+                    labelText: '氏名 *',
+                    prefixIcon: Icon(Icons.person),
                   ),
-                  validator: (value) => value?.isEmpty == true ? '必須項目です' : null,
+                  validator: (value) =>
+                      value?.isEmpty == true ? '必須項目です' : null,
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
-                  controller: _deliveryController,
+                  controller: _phoneController,
                   decoration: const InputDecoration(
-                    labelText: '配送先 *',
-                    prefixIcon: Icon(Icons.flag),
+                    labelText: '電話番号 *',
+                    prefixIcon: Icon(Icons.phone),
                   ),
-                  validator: (value) => value?.isEmpty == true ? '必須項目です' : null,
+                  keyboardType: TextInputType.phone,
+                  validator: (value) =>
+                      value?.isEmpty == true ? '必須項目です' : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _emailController,
+                  decoration: const InputDecoration(
+                    labelText: 'メールアドレス',
+                    prefixIcon: Icon(Icons.email),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
                 ),
                 const SizedBox(height: 16),
                 Row(
                   children: [
                     Expanded(
                       child: TextFormField(
-                        controller: _feeController,
+                        controller: _vehicleController,
                         decoration: const InputDecoration(
-                          labelText: '料金 *',
-                          prefixIcon: Icon(Icons.attach_money),
-                          suffixText: '円',
-                        ),
-                        keyboardType: TextInputType.number,
-                        validator: (value) => value?.isEmpty == true ? '必須項目です' : null,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        value: _priority,
-                        decoration: const InputDecoration(
-                          labelText: '優先度',
-                          prefixIcon: Icon(Icons.priority_high),
-                        ),
-                        items: const [
-                          DropdownMenuItem(value: 'normal', child: Text('通常')),
-                          DropdownMenuItem(value: 'urgent', child: Text('緊急')),
-                          DropdownMenuItem(value: 'low', child: Text('低')),
-                        ],
-                        onChanged: (value) => setState(() => _priority = value!),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: _customerNameController,
-                        decoration: const InputDecoration(
-                          labelText: '顧客名',
-                          prefixIcon: Icon(Icons.person),
+                          labelText: '車両',
+                          prefixIcon: Icon(Icons.directions_car),
                         ),
                       ),
                     ),
                     const SizedBox(width: 16),
                     Expanded(
                       child: TextFormField(
-                        controller: _customerPhoneController,
+                        controller: _licenseController,
                         decoration: const InputDecoration(
-                          labelText: '電話番号',
-                          prefixIcon: Icon(Icons.phone),
+                          labelText: '免許番号',
+                          prefixIcon: Icon(Icons.credit_card),
                         ),
-                        keyboardType: TextInputType.phone,
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 16),
-                ListTile(
-                  leading: const Icon(Icons.schedule),
-                  title: Text(_deadline == null 
-                      ? '配送期限を設定' 
-                      : '期限: ${_deadline!.year}/${_deadline!.month}/${_deadline!.day}'),
-                  trailing: const Icon(Icons.calendar_today),
-                  onTap: _selectDeadline,
-                  contentPadding: EdgeInsets.zero,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _notesController,
+                DropdownButtonFormField<String>(
+                  value: _status,
                   decoration: const InputDecoration(
-                    labelText: '備考',
-                    prefixIcon: Icon(Icons.note),
+                    labelText: 'ステータス',
+                    prefixIcon: Icon(Icons.work),
                   ),
-                  maxLines: 3,
+                  items: const [
+                    DropdownMenuItem(value: '稼働中', child: Text('稼働中')),
+                    DropdownMenuItem(value: '休憩中', child: Text('休憩中')),
+                    DropdownMenuItem(value: 'オフライン', child: Text('オフライン')),
+                  ],
+                  onChanged: (value) => setState(() => _status = value!),
                 ),
               ],
             ),
@@ -848,261 +1512,106 @@ class _DeliveryFormDialogState extends State<_DeliveryFormDialog> {
           child: const Text('キャンセル'),
         ),
         ElevatedButton(
-          onPressed: _isLoading ? null : _saveDelivery,
+          onPressed: _isLoading ? null : _saveDriver,
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
           child: _isLoading
-              ? const CircularProgressIndicator()
-              : Text(widget.deliveryId == null ? '追加' : '更新'),
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(widget.driverId == null ? '登録' : '更新'),
         ),
       ],
     );
   }
 
-  Future<void> _selectDeadline() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _deadline ?? DateTime.now().add(const Duration(days: 1)),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
-    
-    if (picked != null) {
-      setState(() {
-        _deadline = picked;
-      });
-    }
-  }
-
-  Future<void> _saveDelivery() async {
+  Future<void> _saveDriver() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
 
     try {
       final data = {
-        'pickupLocation': _pickupController.text,
-        'deliveryLocation': _deliveryController.text,
-        'fee': int.parse(_feeController.text),
-        'notes': _notesController.text,
-        'customerName': _customerNameController.text,
-        'customerPhone': _customerPhoneController.text,
-        'priority': _priority,
-        'deadline': _deadline != null ? Timestamp.fromDate(_deadline!) : null,
+        'name': _nameController.text.trim(),
+        'phone': _phoneController.text.trim(),
+        'email': _emailController.text.trim(),
+        'vehicle': _vehicleController.text.trim(),
+        'license': _licenseController.text.trim(),
+        'status': _status,
+        'rating': 5.0,
+        'currentDeliveries': 0,
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
-      if (widget.deliveryId == null) {
-        // 新規作成
-        data['status'] = '待機中';
+      if (widget.driverId == null) {
         data['createdAt'] = FieldValue.serverTimestamp();
-        
-        await FirebaseFirestore.instance.collection('deliveries').add(data);
-        
-        // 通知送信
-        await NotificationService.notifyAllAdmins(
-          title: '新しい配送案件が登録されました',
-          message: '${_pickupController.text} → ${_deliveryController.text}',
-          type: 'system',
-        );
+        await FirebaseFirestore.instance.collection('drivers').add(data);
       } else {
-        // 更新
         await FirebaseFirestore.instance
-            .collection('deliveries')
-            .doc(widget.deliveryId)
+            .collection('drivers')
+            .doc(widget.driverId)
             .update(data);
       }
 
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(widget.deliveryId == null ? '配送案件を追加しました' : '配送案件を更新しました')),
+        SnackBar(
+          content:
+              Text(widget.driverId == null ? 'ドライバーを登録しました' : 'ドライバー情報を更新しました'),
+          backgroundColor: Colors.green,
+        ),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('エラー: $e')),
+        SnackBar(
+          content: Text('エラー: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      setState(() => _isLoading = false);
     }
   }
 }
 
-// ドライバー割り当てダイアログ
-class _DriverAssignDialog extends StatefulWidget {
-  final String deliveryId;
-  final Map<String, dynamic> deliveryData;
-
-  const _DriverAssignDialog({
-    required this.deliveryId,
-    required this.deliveryData,
-  });
-
-  @override
-  State<_DriverAssignDialog> createState() => _DriverAssignDialogState();
-}
-
-class _DriverAssignDialogState extends State<_DriverAssignDialog> {
-  String? _selectedDriverId;
-  Map<String, dynamic>? _selectedDriverData;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('ドライバー割り当て'),
-      content: SizedBox(
-        width: double.maxFinite,
-        height: 400,
-        child: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('drivers')
-              .where('status', isEqualTo: '稼働中')
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
-
-            final drivers = snapshot.data!.docs;
-            if (drivers.isEmpty) {
-              return const Center(
-                child: Text('稼働中のドライバーがいません'),
-              );
-            }
-
-            return ListView.builder(
-              itemCount: drivers.length,
-              itemBuilder: (context, index) {
-                final driver = drivers[index];
-                final data = driver.data() as Map<String, dynamic>;
-                final isSelected = _selectedDriverId == driver.id;
-                
-                return Card(
-                  color: isSelected ? Colors.blue.shade50 : null,
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.blue,
-                      child: Text(
-                        (data['name'] as String? ?? 'N')[0].toUpperCase(),
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                    ),
-                    title: Text(data['name'] as String? ?? 'N/A'),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('${data['phone'] as String? ?? 'N/A'} | ${data['vehicle'] as String? ?? 'N/A'}'),
-                        Text(
-                          '現在の案件数: ${(data['currentDeliveries'] as num? ?? 0).toString()}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ],
-                    ),
-                    trailing: isSelected
-                        ? const Icon(Icons.check_circle, color: Colors.blue)
-                        : null,
-                    onTap: () {
-                      setState(() {
-                        _selectedDriverId = driver.id;
-                        _selectedDriverData = data;
-                      });
-                    },
-                  ),
-                );
-              },
-            );
-          },
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('キャンセル'),
-        ),
-        ElevatedButton(
-          onPressed: _selectedDriverId != null ? _assignDriver : null,
-          child: const Text('割り当て'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _assignDriver() async {
-    if (_selectedDriverId == null || _selectedDriverData == null) return;
-
-    try {
-      await FirebaseFirestore.instance
-          .collection('deliveries')
-          .doc(widget.deliveryId)
-          .update({
-        'driverId': _selectedDriverId,
-        'driverName': _selectedDriverData!['name'] as String?,
-        'status': '配送中',
-        'assignedAt': FieldValue.serverTimestamp(),
-      });
-
-      // 通知送信
-      await NotificationService.notifyDeliveryAssigned(
-        driverId: _selectedDriverId!,
-        deliveryId: widget.deliveryId,
-        pickupLocation: widget.deliveryData['pickupLocation'] as String? ?? '',
-        deliveryLocation: widget.deliveryData['deliveryLocation'] as String? ?? '',
-      );
-
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${_selectedDriverData!['name'] as String? ?? 'ドライバー'}に割り当てました')),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('エラー: $e')),
-      );
-    }
-  }
-}
-
-// 配送詳細ダイアログ
-class _DeliveryDetailsDialog extends StatelessWidget {
-  final String deliveryId;
+// ドライバー詳細ダイアログ
+class _DriverDetailsDialog extends StatelessWidget {
+  final String driverId;
   final Map<String, dynamic> data;
 
-  const _DeliveryDetailsDialog({
-    required this.deliveryId,
+  const _DriverDetailsDialog({
+    required this.driverId,
     required this.data,
   });
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('配送案件詳細'),
+      title: const Text('ドライバー詳細'),
       content: SizedBox(
         width: double.maxFinite,
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildDetailRow('案件ID', deliveryId.substring(0, 8)),
+              _buildDetailRow('ID', driverId.substring(0, 8)),
+              _buildDetailRow('氏名', data['name'] as String? ?? 'N/A'),
+              _buildDetailRow('電話番号', data['phone'] as String? ?? 'N/A'),
+              _buildDetailRow('メール', data['email'] as String? ?? 'N/A'),
+              _buildDetailRow('車両', data['vehicle'] as String? ?? 'N/A'),
+              _buildDetailRow('免許番号', data['license'] as String? ?? 'N/A'),
               _buildDetailRow('ステータス', data['status'] as String? ?? 'N/A'),
-              _buildDetailRow('集荷先', data['pickupLocation'] as String? ?? 'N/A'),
-              _buildDetailRow('配送先', data['deliveryLocation'] as String? ?? 'N/A'),
-              _buildDetailRow('料金', '¥${(data['fee'] as num? ?? 0).toString()}'),
-              _buildDetailRow('優先度', _getPriorityText(data['priority'] as String?)),
-              if (data['deadline'] != null)
-                _buildDetailRow('期限', _formatDate((data['deadline'] as Timestamp).toDate())),
-              if (data['customerName'] != null)
-                _buildDetailRow('顧客名', data['customerName'] as String? ?? ''),
-              if (data['customerPhone'] != null)
-                _buildDetailRow('電話番号', data['customerPhone'] as String? ?? ''),
-              if (data['driverName'] != null)
-                _buildDetailRow('担当ドライバー', data['driverName'] as String? ?? ''),
-              if (data['notes'] != null && (data['notes'] as String? ?? '').isNotEmpty)
-                _buildDetailRow('備考', data['notes'] as String? ?? ''),
-              _buildDetailRow('作成日時', _formatTimestamp(data['createdAt'])),
-              if (data['assignedAt'] != null)
-                _buildDetailRow('割り当て日時', _formatTimestamp(data['assignedAt'])),
-              if (data['completedAt'] != null)
-                _buildDetailRow('完了日時', _formatTimestamp(data['completedAt'])),
+              _buildDetailRow(
+                  '評価', '${(data['rating'] as num? ?? 0).toStringAsFixed(1)}★'),
+              _buildDetailRow('担当案件数',
+                  '${(data['currentDeliveries'] as num? ?? 0).round()}件'),
+              if (data['createdAt'] != null)
+                _buildDetailRow(
+                    '登録日', _formatTimestamp(data['createdAt'] as Timestamp)),
+              if (data['statusUpdatedAt'] != null)
+                _buildDetailRow('ステータス更新',
+                    _formatTimestamp(data['statusUpdatedAt'] as Timestamp)),
             ],
           ),
         ),
@@ -1111,6 +1620,19 @@ class _DeliveryDetailsDialog extends StatelessWidget {
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('閉じる'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context);
+            showDialog(
+              context: context,
+              builder: (context) => _DriverFormDialog(
+                driverId: driverId,
+                initialData: data,
+              ),
+            );
+          },
+          child: const Text('編集'),
         ),
       ],
     );
@@ -1135,25 +1657,29 @@ class _DeliveryDetailsDialog extends StatelessWidget {
     );
   }
 
-  String _getPriorityText(String? priority) {
-    switch (priority) {
-      case 'urgent':
-        return '緊急';
-      case 'low':
-        return '低';
-      default:
-        return '通常';
-    }
-  }
-
-  String _formatDate(DateTime date) {
-    return '${date.year}/${date.month}/${date.day}';
-  }
-
-  String _formatTimestamp(Timestamp? timestamp) {
-    if (timestamp == null) return 'N/A';
-    
+  String _formatTimestamp(Timestamp timestamp) {
     final date = timestamp.toDate();
     return '${date.year}/${date.month}/${date.day} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+// NotificationServiceのスタブ
+class NotificationService {
+  static Future<void> notifyAllAdmins({
+    required String title,
+    required String message,
+    required String type,
+    Map<String, dynamic>? data,
+  }) async {
+    // 実装予定
+  }
+
+  static Future<void> notifyDeliveryAssigned({
+    required String driverId,
+    required String deliveryId,
+    required String pickupLocation,
+    required String deliveryLocation,
+  }) async {
+    // 実装予定
   }
 }

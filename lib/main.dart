@@ -6,11 +6,14 @@ import 'firebase_options.dart';
 import 'services/auth_service.dart';
 import 'services/firestore_service.dart';
 import 'screens/admin_dashboard.dart';
-import 'screens/driver_dashboard.dart';
+import 'screens/driver_management_screen.dart';
 import 'screens/performance_monitor.dart';
 import 'screens/system_settings.dart';
 import 'screens/delivery_management_screen.dart';
-import 'screens/main_navigation_screen.dart'; // 追加
+import 'screens/main_navigation_screen.dart';
+import 'screens/advanced_reports_screen.dart';
+import 'screens/sales_management_screen.dart';
+import 'screens/data_management_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,12 +43,16 @@ class MyApp extends StatelessWidget {
       home: AuthWrapper(),
       routes: {
         '/login': (context) => LoginScreen(),
-        '/main': (context) => MainNavigationScreen(), // 修正
+        '/main': (context) => MainNavigationScreen(),
         '/admin-dashboard': (context) => AdminDashboard(),
-        '/driver-dashboard': (context) => DriverDashboard(),
+        '/driver-dashboard': (context) => DriverManagementScreen(),
         '/performance-monitor': (context) => PerformanceMonitor(),
         '/system-settings': (context) => SystemSettingsScreen(),
         '/delivery-management': (context) => DeliveryManagementScreen(),
+        '/driver-management': (context) => DriverManagementScreen(),
+        '/advanced-reports': (context) => AdvancedReportsScreen(),
+        '/sales-management': (context) => SalesManagementScreen(),
+        '/data-management': (context) => DataManagementScreen(),
       },
     );
   }
@@ -63,12 +70,12 @@ class AuthWrapper extends StatelessWidget {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        
+
         if (snapshot.hasData) {
           // ログイン済みの場合、MainNavigationScreenに遷移
           return MainNavigationScreen();
         }
-        
+
         return LoginScreen();
       },
     );
@@ -138,7 +145,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       SizedBox(height: 32),
-                      
                       TextField(
                         controller: _emailController,
                         decoration: InputDecoration(
@@ -151,7 +157,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         keyboardType: TextInputType.emailAddress,
                       ),
                       SizedBox(height: 16),
-                      
                       TextField(
                         controller: _passwordController,
                         decoration: InputDecoration(
@@ -164,7 +169,6 @@ class _LoginScreenState extends State<LoginScreen> {
                         obscureText: true,
                       ),
                       SizedBox(height: 24),
-                      
                       SizedBox(
                         width: double.infinity,
                         height: 48,
@@ -181,12 +185,13 @@ class _LoginScreenState extends State<LoginScreen> {
                               ? CircularProgressIndicator(color: Colors.white)
                               : Text(
                                   _isRegisterMode ? '登録' : 'ログイン',
-                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                  style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold),
                                 ),
                         ),
                       ),
                       SizedBox(height: 16),
-                      
                       TextButton(
                         onPressed: () {
                           setState(() {
@@ -198,11 +203,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           style: TextStyle(color: Colors.blue[600]),
                         ),
                       ),
-                      
                       SizedBox(height: 24),
                       Divider(),
                       SizedBox(height: 16),
-                      
                       Text(
                         'テスト用アカウント',
                         style: TextStyle(
@@ -212,12 +215,12 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       SizedBox(height: 12),
-                      
                       Row(
                         children: [
                           Expanded(
                             child: ElevatedButton(
-                              onPressed: _isLoading ? null : () => _testLogin('admin'),
+                              onPressed:
+                                  _isLoading ? null : () => _testLogin('admin'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.green,
                                 foregroundColor: Colors.white,
@@ -231,7 +234,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           SizedBox(width: 12),
                           Expanded(
                             child: ElevatedButton(
-                              onPressed: _isLoading ? null : () => _testLogin('driver'),
+                              onPressed: _isLoading
+                                  ? null
+                                  : () => _testLogin('driver'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.orange,
                                 foregroundColor: Colors.white,
@@ -272,7 +277,7 @@ class _LoginScreenState extends State<LoginScreen> {
           _emailController.text,
           _passwordController.text,
         );
-        
+
         if (user != null) {
           await _firestoreService.createOrUpdateUser(
             userId: user.uid,
@@ -304,14 +309,16 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final email = role == 'admin' ? 'admin@doubletech.co.jp' : 'driver@doubletech.co.jp';
+      final email = role == 'admin'
+          ? 'admin@doubletech.co.jp'
+          : 'driver@doubletech.co.jp';
       final password = '${role}123';
 
       User? user = await _authService.signInWithEmail(email, password);
-      
+
       if (user == null) {
         user = await _authService.registerWithEmail(email, password);
-        
+
         if (user != null) {
           await _firestoreService.createOrUpdateUser(
             userId: user.uid,

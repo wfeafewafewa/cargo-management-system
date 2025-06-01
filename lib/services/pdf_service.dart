@@ -1,12 +1,11 @@
 // lib/services/pdf_service.dart
-import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:printing/printing.dart';
 
 class PDFService {
-  
   // 月次売上請求書生成
   static Future<void> generateMonthlySalesInvoice({
     required String month,
@@ -14,7 +13,7 @@ class PDFService {
     required Map<String, dynamic> summary,
   }) async {
     final pdf = pw.Document();
-    
+
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -36,19 +35,19 @@ class PDFService {
         },
       ),
     );
-    
+
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdf.save(),
     );
   }
-  
+
   // 配送明細書生成
   static Future<void> generateDeliveryInvoice({
     required Map<String, dynamic> deliveryData,
     required Map<String, dynamic> driverData,
   }) async {
     final pdf = pw.Document();
-    
+
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
@@ -73,12 +72,12 @@ class PDFService {
         },
       ),
     );
-    
+
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdf.save(),
     );
   }
-  
+
   // ドライバー別売上明細書
   static Future<void> generateDriverSalesReport({
     required String month,
@@ -87,7 +86,7 @@ class PDFService {
     required Map<String, dynamic> summary,
   }) async {
     final pdf = pw.Document();
-    
+
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -109,12 +108,12 @@ class PDFService {
         },
       ),
     );
-    
+
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdf.save(),
     );
   }
-  
+
   // ヘッダー部分
   static pw.Widget _buildInvoiceHeader() {
     return pw.Row(
@@ -155,7 +154,7 @@ class PDFService {
       ],
     );
   }
-  
+
   // 会社情報
   static pw.Widget _buildCompanyInfo() {
     return pw.Container(
@@ -179,19 +178,29 @@ class PDFService {
       ),
     );
   }
-  
+
   // 請求書タイトル
   static pw.Widget _buildInvoiceTitle(String title, String month) {
     final monthNames = {
-      '01': '1月', '02': '2月', '03': '3月', '04': '4月', '05': '5月', '06': '6月',
-      '07': '7月', '08': '8月', '09': '9月', '10': '10月', '11': '11月', '12': '12月'
+      '01': '1月',
+      '02': '2月',
+      '03': '3月',
+      '04': '4月',
+      '05': '5月',
+      '06': '6月',
+      '07': '7月',
+      '08': '8月',
+      '09': '9月',
+      '10': '10月',
+      '11': '11月',
+      '12': '12月'
     };
-    
+
     final parts = month.split('-');
     final year = parts[0];
     final monthNum = parts[1];
     final monthName = monthNames[monthNum] ?? monthNum;
-    
+
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
@@ -211,7 +220,7 @@ class PDFService {
       ],
     );
   }
-  
+
   // 売上サマリー
   static pw.Widget _buildSalesSummary(Map<String, dynamic> summary) {
     return pw.Container(
@@ -224,27 +233,33 @@ class PDFService {
       child: pw.Row(
         mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
         children: [
-          _buildSummaryItem('総売上', '¥${(summary['totalSales'] ?? 0).toStringAsFixed(0)}'),
+          _buildSummaryItem(
+              '総売上', '¥${(summary['totalSales'] ?? 0).toStringAsFixed(0)}'),
           _buildSummaryItem('配送件数', '${summary['totalTransactions'] ?? 0}件'),
-          _buildSummaryItem('手数料総額', '¥${(summary['totalCommission'] ?? 0).toStringAsFixed(0)}'),
+          _buildSummaryItem('手数料総額',
+              '¥${(summary['totalCommission'] ?? 0).toStringAsFixed(0)}'),
         ],
       ),
     );
   }
-  
+
   static pw.Widget _buildSummaryItem(String label, String value) {
     return pw.Column(
       children: [
-        pw.Text(label, style: pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
+        pw.Text(label,
+            style: pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
         pw.SizedBox(height: 4),
         pw.Text(
           value,
-          style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold, color: PdfColors.blue800),
+          style: pw.TextStyle(
+              fontSize: 16,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.blue800),
         ),
       ],
     );
   }
-  
+
   // 売上テーブル
   static pw.Widget _buildSalesTable(List<Map<String, dynamic>> salesData) {
     return pw.Table(
@@ -270,18 +285,21 @@ class PDFService {
         ),
         // データ行
         ...salesData.map((sale) => pw.TableRow(
-          children: [
-            _buildTableCell(sale['deliveryId']?.toString().substring(0, 8) ?? '未設定'),
-            _buildTableCell(sale['driverName'] ?? '未設定'),
-            _buildTableCell('¥${(sale['amount'] ?? 0).toStringAsFixed(0)}'),
-            _buildTableCell('¥${(sale['commission'] ?? 0).toStringAsFixed(0)}'),
-            _buildTableCell('¥${(sale['netAmount'] ?? 0).toStringAsFixed(0)}'),
-          ],
-        )),
+              children: [
+                _buildTableCell(
+                    sale['deliveryId']?.toString().substring(0, 8) ?? '未設定'),
+                _buildTableCell(sale['driverName'] ?? '未設定'),
+                _buildTableCell('¥${(sale['amount'] ?? 0).toStringAsFixed(0)}'),
+                _buildTableCell(
+                    '¥${(sale['commission'] ?? 0).toStringAsFixed(0)}'),
+                _buildTableCell(
+                    '¥${(sale['netAmount'] ?? 0).toStringAsFixed(0)}'),
+              ],
+            )),
       ],
     );
   }
-  
+
   static pw.Widget _buildTableHeader(String text) {
     return pw.Container(
       padding: pw.EdgeInsets.all(8),
@@ -292,7 +310,7 @@ class PDFService {
       ),
     );
   }
-  
+
   static pw.Widget _buildTableCell(String text) {
     return pw.Container(
       padding: pw.EdgeInsets.all(8),
@@ -303,9 +321,10 @@ class PDFService {
       ),
     );
   }
-  
+
   // 配送詳細
-  static pw.Widget _buildDeliveryDetails(Map<String, dynamic> delivery, Map<String, dynamic> driver) {
+  static pw.Widget _buildDeliveryDetails(
+      Map<String, dynamic> delivery, Map<String, dynamic> driver) {
     return pw.Container(
       padding: pw.EdgeInsets.all(16),
       decoration: pw.BoxDecoration(
@@ -318,12 +337,16 @@ class PDFService {
           _buildDetailRow('案件名', delivery['title'] ?? '未設定'),
           _buildDetailRow('クライアント', delivery['client'] ?? '未設定'),
           _buildDetailRow('ドライバー', driver['name'] ?? '未設定'),
-          _buildDetailRow('車両', '${driver['vehicleType'] ?? '未設定'} (${driver['vehicleNumber'] ?? '未設定'})'),
+          _buildDetailRow('車両',
+              '${driver['vehicleType'] ?? '未設定'} (${driver['vehicleNumber'] ?? '未設定'})'),
           pw.SizedBox(height: 10),
-          _buildDetailRow('集荷先', delivery['pickupLocation']?['address'] ?? '未設定'),
-          _buildDetailRow('配送先', delivery['deliveryLocation']?['address'] ?? '未設定'),
+          _buildDetailRow(
+              '集荷先', delivery['pickupLocation']?['address'] ?? '未設定'),
+          _buildDetailRow(
+              '配送先', delivery['deliveryLocation']?['address'] ?? '未設定'),
           pw.SizedBox(height: 10),
-          _buildDetailRow('配送料金', '¥${(delivery['price'] ?? 0).toStringAsFixed(0)}'),
+          _buildDetailRow(
+              '配送料金', '¥${(delivery['price'] ?? 0).toStringAsFixed(0)}'),
           _buildDetailRow('重量', delivery['weight'] ?? '未設定'),
           if (delivery['notes']?.isNotEmpty ?? false)
             _buildDetailRow('備考', delivery['notes']),
@@ -331,7 +354,7 @@ class PDFService {
       ),
     );
   }
-  
+
   static pw.Widget _buildDetailRow(String label, String value) {
     return pw.Padding(
       padding: pw.EdgeInsets.symmetric(vertical: 2),
@@ -352,7 +375,7 @@ class PDFService {
       ),
     );
   }
-  
+
   // ドライバー情報
   static pw.Widget _buildDriverInfo(Map<String, dynamic> driver) {
     return pw.Container(
@@ -371,14 +394,16 @@ class PDFService {
           pw.SizedBox(height: 8),
           _buildDetailRow('氏名', driver['name'] ?? '未設定'),
           _buildDetailRow('電話番号', driver['phone'] ?? '未設定'),
-          _buildDetailRow('車両', '${driver['vehicleType'] ?? '未設定'} (${driver['vehicleNumber'] ?? '未設定'})'),
+          _buildDetailRow('車両',
+              '${driver['vehicleType'] ?? '未設定'} (${driver['vehicleNumber'] ?? '未設定'})'),
         ],
       ),
     );
   }
-  
+
   // ドライバー売上テーブル
-  static pw.Widget _buildDriverSalesTable(List<Map<String, dynamic>> salesData) {
+  static pw.Widget _buildDriverSalesTable(
+      List<Map<String, dynamic>> salesData) {
     return pw.Table(
       border: pw.TableBorder.all(color: PdfColors.grey300),
       columnWidths: {
@@ -400,17 +425,18 @@ class PDFService {
         ),
         // データ行
         ...salesData.map((sale) => pw.TableRow(
-          children: [
-            _buildTableCell(_formatDate(sale['createdAt'])),
-            _buildTableCell(sale['deliveryTitle'] ?? '未設定'),
-            _buildTableCell('¥${(sale['amount'] ?? 0).toStringAsFixed(0)}'),
-            _buildTableCell('¥${(sale['netAmount'] ?? 0).toStringAsFixed(0)}'),
-          ],
-        )),
+              children: [
+                _buildTableCell(_formatDate(sale['createdAt'])),
+                _buildTableCell(sale['deliveryTitle'] ?? '未設定'),
+                _buildTableCell('¥${(sale['amount'] ?? 0).toStringAsFixed(0)}'),
+                _buildTableCell(
+                    '¥${(sale['netAmount'] ?? 0).toStringAsFixed(0)}'),
+              ],
+            )),
       ],
     );
   }
-  
+
   // ドライバーサマリー
   static pw.Widget _buildDriverSummary(Map<String, dynamic> summary) {
     return pw.Container(
@@ -424,13 +450,15 @@ class PDFService {
         mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
         children: [
           _buildSummaryItem('総配送数', '${summary['totalDeliveries'] ?? 0}件'),
-          _buildSummaryItem('総売上', '¥${(summary['totalSales'] ?? 0).toStringAsFixed(0)}'),
-          _buildSummaryItem('純利益', '¥${(summary['netAmount'] ?? 0).toStringAsFixed(0)}'),
+          _buildSummaryItem(
+              '総売上', '¥${(summary['totalSales'] ?? 0).toStringAsFixed(0)}'),
+          _buildSummaryItem(
+              '純利益', '¥${(summary['netAmount'] ?? 0).toStringAsFixed(0)}'),
         ],
       ),
     );
   }
-  
+
   // 支払い情報
   static pw.Widget _buildPaymentInfo(Map<String, dynamic> summary) {
     return pw.Container(
@@ -449,13 +477,14 @@ class PDFService {
           ),
           pw.SizedBox(height: 8),
           pw.Text('支払予定額: ¥${(summary['netAmount'] ?? 0).toStringAsFixed(0)}'),
-          pw.Text('支払予定日: ${DateTime.now().add(Duration(days: 30)).year}年${DateTime.now().add(Duration(days: 30)).month}月${DateTime.now().add(Duration(days: 30)).day}日'),
+          pw.Text(
+              '支払予定日: ${DateTime.now().add(Duration(days: 30)).year}年${DateTime.now().add(Duration(days: 30)).month}月${DateTime.now().add(Duration(days: 30)).day}日'),
           pw.Text('振込先: ○○銀行 ○○支店 普通 1234567'),
         ],
       ),
     );
   }
-  
+
   // 配送マップ（プレースホルダー）
   static pw.Widget _buildDeliveryMap() {
     return pw.Container(
@@ -476,7 +505,7 @@ class PDFService {
       ),
     );
   }
-  
+
   // 配送タイトル
   static pw.Widget _buildDeliveryTitle() {
     return pw.Text(
@@ -484,7 +513,7 @@ class PDFService {
       style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
     );
   }
-  
+
   // フッター
   static pw.Widget _buildInvoiceFooter() {
     return pw.Container(
@@ -507,11 +536,11 @@ class PDFService {
       ),
     );
   }
-  
+
   // 日付フォーマット
   static String _formatDate(dynamic timestamp) {
     if (timestamp == null) return '未設定';
-    
+
     DateTime date;
     if (timestamp is Timestamp) {
       date = timestamp.toDate();
@@ -520,7 +549,7 @@ class PDFService {
     } else {
       return '未設定';
     }
-    
+
     return '${date.month}/${date.day}';
   }
 }

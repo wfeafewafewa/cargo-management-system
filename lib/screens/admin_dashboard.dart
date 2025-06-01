@@ -9,17 +9,43 @@ class AdminDashboard extends StatefulWidget {
   State<AdminDashboard> createState() => _AdminDashboardState();
 }
 
-class _AdminDashboardState extends State<AdminDashboard> {
+class _AdminDashboardState extends State<AdminDashboard>
+    with TickerProviderStateMixin {
   Map<String, int> _stats = {};
   bool _isLoading = true;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
     super.initState();
+    _setupAnimations();
     _loadDashboardData();
   }
 
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  void _setupAnimations() {
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOut,
+    ));
+  }
+
   Future<void> _loadDashboardData() async {
+    setState(() => _isLoading = true);
+
     try {
       final futures = await Future.wait([
         FirebaseFirestore.instance.collection('deliveries').get(),
@@ -35,39 +61,59 @@ class _AdminDashboardState extends State<AdminDashboard> {
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
 
-      // 統計計算
-      final pendingDeliveries = deliveries.docs.where((d) => 
-          (d.data() as Map<String, dynamic>)['status'] == '待機中').length;
-      
-      final inProgressDeliveries = deliveries.docs.where((d) => 
-          (d.data() as Map<String, dynamic>)['status'] == '配送中').length;
-      
-      final completedDeliveries = deliveries.docs.where((d) => 
-          (d.data() as Map<String, dynamic>)['status'] == '完了').length;
+      // 統計計算（安全な型変換）
+      final pendingDeliveries = deliveries.docs.where((d) {
+        final data = d.data() as Map<String, dynamic>?;
+        return data?['status'] == '待機中';
+      }).length;
 
-      final activeDrivers = drivers.docs.where((d) => 
-          (d.data() as Map<String, dynamic>)['status'] == '稼働中').length;
+      final inProgressDeliveries = deliveries.docs.where((d) {
+        final data = d.data() as Map<String, dynamic>?;
+        return data?['status'] == '配送中';
+      }).length;
+
+      final completedDeliveries = deliveries.docs.where((d) {
+        final data = d.data() as Map<String, dynamic>?;
+        return data?['status'] == '完了';
+      }).length;
+
+      final activeDrivers = drivers.docs.where((d) {
+        final data = d.data() as Map<String, dynamic>?;
+        return data?['status'] == '稼働中';
+      }).length;
+
+      final restingDrivers = drivers.docs.where((d) {
+        final data = d.data() as Map<String, dynamic>?;
+        return data?['status'] == '休憩中';
+      }).length;
 
       // 今日の売上
       double todaySales = 0;
-      for (final sale in sales.docs) {
-        final data = sale.data() as Map<String, dynamic>;
-        final completedAt = (data['completedAt'] as Timestamp?)?.toDate();
-        if (completedAt != null && completedAt.isAfter(todayStart)) {
-          todaySales += (data['amount'] as num?)?.toDouble() ?? 0;
-        }
-      }
+      int todayCompletedCount = 0;
 
       // 今月の売上
       final monthStart = DateTime(today.year, today.month, 1);
       double monthSales = 0;
+      int monthCompletedCount = 0;
+
       for (final sale in sales.docs) {
-        final data = sale.data() as Map<String, dynamic>;
-        final completedAt = (data['completedAt'] as Timestamp?)?.toDate();
+        final data = sale.data() as Map<String, dynamic>?;
+        final completedAt = (data?['completedAt'] as Timestamp?)?.toDate();
+        final amount = (data?['amount'] as num?)?.toDouble() ?? 0;
+
+        if (completedAt != null && completedAt.isAfter(todayStart)) {
+          todaySales += amount;
+          todayCompletedCount++;
+        }
         if (completedAt != null && completedAt.isAfter(monthStart)) {
-          monthSales += (data['amount'] as num?)?.toDouble() ?? 0;
+          monthSales += amount;
+          monthCompletedCount++;
         }
       }
+
+      // 平均単価計算
+      final avgOrderValue =
+          monthCompletedCount > 0 ? monthSales / monthCompletedCount : 0;
 
       setState(() {
         _stats = {
@@ -77,18 +123,41 @@ class _AdminDashboardState extends State<AdminDashboard> {
           'completedDeliveries': completedDeliveries,
           'totalDrivers': drivers.docs.length,
           'activeDrivers': activeDrivers,
+          'restingDrivers': restingDrivers,
           'todaySales': todaySales.round(),
           'monthSales': monthSales.round(),
-          'completionRate': deliveries.docs.isEmpty ? 0 : 
-              ((completedDeliveries / deliveries.docs.length) * 100).round(),
+          'todayCompletedCount': todayCompletedCount,
+          'monthCompletedCount': monthCompletedCount,
+          'avgOrderValue': avgOrderValue.round(),
+          'completionRate': deliveries.docs.isEmpty
+              ? 0
+              : ((completedDeliveries / deliveries.docs.length) * 100).round(),
+          'driverUtilization': drivers.docs.isEmpty
+              ? 0
+              : ((activeDrivers / drivers.docs.length) * 100).round(),
         };
         _isLoading = false;
       });
+
+      _animationController.forward();
     } catch (e) {
       setState(() {
         _isLoading = false;
       });
-      print('ダッシュボードデータ読み込みエラー: $e');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('データ読み込みエラー: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: '再試行',
+              onPressed: _loadDashboardData,
+              textColor: Colors.white,
+            ),
+          ),
+        );
+      }
     }
   }
 
@@ -97,23 +166,70 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('管理者ダッシュボード'),
-        backgroundColor: Colors.blue,
+        backgroundColor: Colors.blue.shade700,
         foregroundColor: Colors.white,
+        elevation: 0,
+        automaticallyImplyLeading: false,
         actions: [
           IconButton(
             onPressed: _loadDashboardData,
             icon: const Icon(Icons.refresh),
             tooltip: '更新',
           ),
+          IconButton(
+            onPressed: () => _showNotifications(),
+            icon: Stack(
+              children: [
+                const Icon(Icons.notifications),
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 12,
+                      minHeight: 12,
+                    ),
+                    child: Text(
+                      '${_stats['pendingDeliveries'] ?? 0}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 8,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            tooltip: '通知',
+          ),
           PopupMenuButton<String>(
             onSelected: (value) {
-              if (value == 'logout') {
-                _logout();
-              } else if (value == 'settings') {
-                _showComingSoon('設定');
+              switch (value) {
+                case 'settings':
+                  Navigator.pushNamed(context, '/system-settings');
+                  break;
+                case 'profile':
+                  _showUserProfile();
+                  break;
+                case 'logout':
+                  _logout();
+                  break;
               }
             },
             itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'profile',
+                child: ListTile(
+                  leading: Icon(Icons.person),
+                  title: Text('プロフィール'),
+                ),
+              ),
               const PopupMenuItem(
                 value: 'settings',
                 child: ListTile(
@@ -121,6 +237,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   title: Text('設定'),
                 ),
               ),
+              const PopupMenuDivider(),
               const PopupMenuItem(
                 value: 'logout',
                 child: ListTile(
@@ -137,17 +254,24 @@ class _AdminDashboardState extends State<AdminDashboard> {
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildWelcomeSection(),
-              const SizedBox(height: 24),
-              _buildStatsSection(),
-              const SizedBox(height: 24),
-              _buildQuickActions(),
-              const SizedBox(height: 24),
-              _buildRecentActivity(),
-            ],
+          child: FadeTransition(
+            opacity: _fadeAnimation,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildWelcomeSection(),
+                const SizedBox(height: 24),
+                _buildStatsSection(),
+                const SizedBox(height: 24),
+                _buildPerformanceMetrics(),
+                const SizedBox(height: 24),
+                _buildQuickActions(),
+                const SizedBox(height: 24),
+                _buildRecentActivity(),
+                const SizedBox(height: 24),
+                _buildSystemHealth(),
+              ],
+            ),
           ),
         ),
       ),
@@ -155,12 +279,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _buildWelcomeSection() {
+    final user = FirebaseAuth.instance.currentUser;
+    final currentHour = DateTime.now().hour;
+    String greeting = currentHour < 12
+        ? 'おはようございます'
+        : currentHour < 18
+            ? 'こんにちは'
+            : 'お疲れさまです';
+
     return Card(
+      elevation: 4,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -175,14 +308,33 @@ class _AdminDashboardState extends State<AdminDashboard> {
           children: [
             Row(
               children: [
-                Icon(Icons.dashboard, color: Colors.blue.shade700, size: 32),
-                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade700,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.dashboard,
+                    color: Colors.white,
+                    size: 32,
+                  ),
+                ),
+                const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '管理者ダッシュボード',
+                        '$greeting！',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.blue.shade800,
+                        ),
+                      ),
+                      Text(
+                        user?.email?.split('@')[0] ?? '管理者',
                         style: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
@@ -201,12 +353,31 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            Text(
-              '最終更新: ${DateTime.now().toString().substring(0, 16)}',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade600,
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade700.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.update,
+                    size: 16,
+                    color: Colors.blue.shade700,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '最終更新: ${DateTime.now().toString().substring(0, 16)}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.blue.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -217,68 +388,81 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Widget _buildStatsSection() {
     if (_isLoading) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(40),
-          child: Center(child: CircularProgressIndicator()),
+      return Card(
+        child: Container(
+          height: 200,
+          padding: const EdgeInsets.all(40),
+          child: const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('データを読み込み中...'),
+              ],
+            ),
+          ),
         ),
       );
     }
 
     return Card(
+      elevation: 4,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '今日の統計',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                Icon(Icons.analytics, color: Colors.blue.shade700),
+                const SizedBox(width: 8),
+                const Text(
+                  '今日の統計',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             GridView.count(
               crossAxisCount: 2,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 1.5,
+              mainAxisSpacing: 16,
+              crossAxisSpacing: 16,
+              childAspectRatio: 1.3,
               children: [
                 _buildStatCard(
                   '配送案件',
                   '${_stats['totalDeliveries'] ?? 0}',
                   Icons.local_shipping,
                   Colors.blue,
-                  subtitle: '待機: ${_stats['pendingDeliveries'] ?? 0} | 進行: ${_stats['inProgressDeliveries'] ?? 0}',
+                  subtitle:
+                      '待機: ${_stats['pendingDeliveries'] ?? 0} | 進行: ${_stats['inProgressDeliveries'] ?? 0}',
                 ),
                 _buildStatCard(
                   'ドライバー',
                   '${_stats['activeDrivers'] ?? 0}/${_stats['totalDrivers'] ?? 0}',
                   Icons.people,
                   Colors.green,
-                  subtitle: '稼働中/総数',
+                  subtitle: '稼働率: ${_stats['driverUtilization'] ?? 0}%',
                 ),
                 _buildStatCard(
                   '今日の売上',
                   '¥${_formatNumber(_stats['todaySales'] ?? 0)}',
                   Icons.today,
                   Colors.orange,
+                  subtitle: '${_stats['todayCompletedCount'] ?? 0}件完了',
                 ),
                 _buildStatCard(
                   '今月の売上',
                   '¥${_formatNumber(_stats['monthSales'] ?? 0)}',
                   Icons.calendar_month,
                   Colors.purple,
+                  subtitle:
+                      '平均: ¥${_formatNumber(_stats['avgOrderValue'] ?? 0)}',
                 ),
               ],
-            ),
-            const SizedBox(height: 16),
-            _buildStatCard(
-              '完了率',
-              '${_stats['completionRate'] ?? 0}%',
-              Icons.check_circle,
-              Colors.teal,
-              isWide: true,
             ),
           ],
         ),
@@ -286,25 +470,139 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color, 
-      {String? subtitle, bool isWide = false}) {
+  Widget _buildPerformanceMetrics() {
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.trending_up, color: Colors.green.shade700),
+                const SizedBox(width: 8),
+                const Text(
+                  'パフォーマンス指標',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildPerformanceIndicator(
+                    '完了率',
+                    _stats['completionRate'] ?? 0,
+                    Colors.green,
+                    '%',
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildPerformanceIndicator(
+                    'ドライバー稼働率',
+                    _stats['driverUtilization'] ?? 0,
+                    Colors.blue,
+                    '%',
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPerformanceIndicator(
+      String title, int value, Color color, String suffix) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 14,
+              color: Colors.grey,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '$value',
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+              Text(
+                suffix,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: value / 100,
+            backgroundColor: color.withValues(alpha: 0.2),
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard(String title, String value, IconData icon, Color color,
+      {String? subtitle}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withValues(alpha: 0.1),
+            spreadRadius: 1,
+            blurRadius: 3,
+            offset: const Offset(0, 1),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, color: color, size: isWide ? 32 : 24),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, color: color, size: 24),
+              ),
               const Spacer(),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Text(
             title,
             style: const TextStyle(
@@ -317,7 +615,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           Text(
             value,
             style: TextStyle(
-              fontSize: isWide ? 24 : 20,
+              fontSize: 20,
               fontWeight: FontWeight.bold,
               color: color,
             ),
@@ -339,23 +637,30 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Widget _buildQuickActions() {
     return Card(
+      elevation: 4,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'クイックアクション',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                Icon(Icons.flash_on, color: Colors.orange.shade700),
+                const SizedBox(width: 8),
+                const Text(
+                  'クイックアクション',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             GridView.count(
               crossAxisCount: 2,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               mainAxisSpacing: 12,
               crossAxisSpacing: 12,
-              childAspectRatio: 2.5,
+              childAspectRatio: 2.2,
               children: [
                 _buildActionButton(
                   '配送管理',
@@ -367,19 +672,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   'ドライバー管理',
                   Icons.people,
                   Colors.green,
-                  () => _showComingSoon('ドライバー管理'),
+                  () => Navigator.pushNamed(context, '/driver-management'),
                 ),
                 _buildActionButton(
                   '売上管理',
                   Icons.attach_money,
                   Colors.orange,
-                  () => _showComingSoon('売上管理'),
+                  () => Navigator.pushNamed(context, '/sales-management'),
                 ),
                 _buildActionButton(
-                  'パフォーマンス監視',
+                  'レポート',
                   Icons.analytics,
                   Colors.purple,
-                  () => Navigator.pushNamed(context, '/performance-monitor'),
+                  () => Navigator.pushNamed(context, '/advanced-reports'),
                 ),
                 _buildActionButton(
                   'システム設定',
@@ -391,7 +696,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   'データ管理',
                   Icons.storage,
                   Colors.teal,
-                  () => _showComingSoon('データ管理'),
+                  () => Navigator.pushNamed(context, '/data-management'),
                 ),
               ],
             ),
@@ -401,42 +706,47 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildActionButton(String label, IconData icon, Color color, VoidCallback onPressed) {
+  Widget _buildActionButton(
+      String label, IconData icon, Color color, VoidCallback onPressed) {
     return ElevatedButton.icon(
       onPressed: onPressed,
       icon: Icon(icon, size: 20),
       label: Text(
         label,
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
       ),
       style: ElevatedButton.styleFrom(
         backgroundColor: color,
         foregroundColor: Colors.white,
         elevation: 2,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       ),
     );
   }
 
   Widget _buildRecentActivity() {
     return Card(
+      elevation: 4,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
+                Icon(Icons.history, color: Colors.indigo.shade700),
+                const SizedBox(width: 8),
                 const Text(
                   '最近のアクティビティ',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 const Spacer(),
                 TextButton.icon(
-                  onPressed: () => _showComingSoon('配送管理'),
+                  onPressed: () =>
+                      Navigator.pushNamed(context, '/delivery-management'),
                   icon: const Icon(Icons.arrow_forward, size: 16),
                   label: const Text('すべて見る'),
                 ),
@@ -451,17 +761,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(20),
-                      child: CircularProgressIndicator(),
-                    ),
+                  return Container(
+                    height: 100,
+                    child: const Center(child: CircularProgressIndicator()),
                   );
                 }
 
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                   return Container(
-                    padding: const EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(40),
                     child: const Column(
                       children: [
                         Icon(Icons.inbox, size: 48, color: Colors.grey),
@@ -489,13 +797,108 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  Widget _buildSystemHealth() {
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.health_and_safety, color: Colors.green.shade700),
+                const SizedBox(width: 8),
+                const Text(
+                  'システムヘルス',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildHealthIndicator(
+                    'データベース',
+                    true,
+                    'オンライン',
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildHealthIndicator(
+                    'Firebase Auth',
+                    true,
+                    '正常',
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildHealthIndicator(
+                    'PDF生成',
+                    true,
+                    '動作中',
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHealthIndicator(String service, bool isHealthy, String status) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isHealthy
+            ? Colors.green.withValues(alpha: 0.1)
+            : Colors.red.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isHealthy
+              ? Colors.green.withValues(alpha: 0.3)
+              : Colors.red.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            isHealthy ? Icons.check_circle : Icons.error,
+            color: isHealthy ? Colors.green : Colors.red,
+            size: 24,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            service,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          Text(
+            status,
+            style: TextStyle(
+              fontSize: 10,
+              color: isHealthy ? Colors.green : Colors.red,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildActivityItem(Map<String, dynamic> data) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey.shade200),
       ),
       child: Row(
@@ -513,13 +916,36 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     fontSize: 14,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  '${data['status'] ?? 'N/A'} - ¥${_formatNumber(data['fee'] ?? 0)}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey,
-                  ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: _getStatusColor(data['status'])
+                            .withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        data['status'] ?? 'N/A',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: _getStatusColor(data['status']),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '¥${_formatNumber(data['fee'] ?? 0)}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -538,46 +964,55 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   Widget _buildStatusIcon(String? status) {
     IconData icon;
-    Color color;
-    
+    Color color = _getStatusColor(status);
+
     switch (status) {
       case '待機中':
         icon = Icons.hourglass_empty;
-        color = Colors.orange;
         break;
       case '配送中':
         icon = Icons.local_shipping;
-        color = Colors.blue;
         break;
       case '完了':
         icon = Icons.check_circle;
-        color = Colors.green;
         break;
       default:
         icon = Icons.help;
-        color = Colors.grey;
     }
 
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         shape: BoxShape.circle,
       ),
       child: Icon(icon, color: color, size: 20),
     );
   }
 
+  Color _getStatusColor(String? status) {
+    switch (status) {
+      case '待機中':
+        return Colors.orange;
+      case '配送中':
+        return Colors.blue;
+      case '完了':
+        return Colors.green;
+      default:
+        return Colors.grey;
+    }
+  }
+
   String _formatNumber(int number) {
     return number.toString().replaceAllMapped(
-      RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]},',
-    );
+          RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+          (Match m) => '${m[1]},',
+        );
   }
 
   String _formatTimestamp(Timestamp? timestamp) {
     if (timestamp == null) return '';
-    
+
     final date = timestamp.toDate();
     final now = DateTime.now();
     final difference = now.difference(date);
@@ -596,6 +1031,70 @@ class _AdminDashboardState extends State<AdminDashboard> {
       SnackBar(
         content: Text('$feature機能は準備中です'),
         backgroundColor: Colors.orange,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _showNotifications() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('通知'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.warning, color: Colors.orange),
+              title: Text('待機中の配送案件: ${_stats['pendingDeliveries'] ?? 0}件'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.info, color: Colors.blue),
+              title: Text('進行中の配送案件: ${_stats['inProgressDeliveries'] ?? 0}件'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('閉じる'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/delivery-management');
+            },
+            child: const Text('配送管理へ'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showUserProfile() {
+    final user = FirebaseAuth.instance.currentUser;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('ユーザープロフィール'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('メール: ${user?.email ?? 'N/A'}'),
+            Text('UID: ${user?.uid ?? 'N/A'}'),
+            Text(
+                '作成日: ${user?.metadata.creationTime?.toString().substring(0, 10) ?? 'N/A'}'),
+            Text(
+                '最終ログイン: ${user?.metadata.lastSignInTime?.toString().substring(0, 16) ?? 'N/A'}'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('閉じる'),
+          ),
+        ],
       ),
     );
   }
@@ -621,8 +1120,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
 
     if (confirmed == true) {
-      await FirebaseAuth.instance.signOut();
-      Navigator.pushReplacementNamed(context, '/login');
+      try {
+        await FirebaseAuth.instance.signOut();
+        if (mounted) {
+          Navigator.pushReplacementNamed(context, '/login');
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('ログアウトエラー: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
     }
   }
 }

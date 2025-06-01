@@ -1,4 +1,5 @@
 // lib/services/auth_service.dart (修正版)
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class AuthService {
@@ -19,7 +20,7 @@ class AuthService {
       );
       return result.user;
     } catch (e) {
-      print('サインインエラー: $e');
+      debugPrint('サインインエラー: $e');
       throw e;
     }
   }
@@ -33,7 +34,7 @@ class AuthService {
       );
       return result.user;
     } catch (e) {
-      print('登録エラー: $e');
+      debugPrint('登録エラー: $e');
       throw e;
     }
   }
@@ -43,7 +44,7 @@ class AuthService {
     try {
       await _auth.signOut();
     } catch (e) {
-      print('サインアウトエラー: $e');
+      debugPrint('サインアウトエラー: $e');
       throw e;
     }
   }
@@ -53,7 +54,7 @@ class AuthService {
     try {
       await _auth.sendPasswordResetEmail(email: email);
     } catch (e) {
-      print('パスワードリセットエラー: $e');
+      debugPrint('パスワードリセットエラー: $e');
       throw e;
     }
   }
@@ -66,7 +67,7 @@ class AuthService {
         await user.delete();
       }
     } catch (e) {
-      print('ユーザー削除エラー: $e');
+      debugPrint('ユーザー削除エラー: $e');
       throw e;
     }
   }
@@ -79,7 +80,7 @@ class AuthService {
         await user.updateEmail(newEmail);
       }
     } catch (e) {
-      print('メール更新エラー: $e');
+      debugPrint('メール更新エラー: $e');
       throw e;
     }
   }
@@ -92,7 +93,7 @@ class AuthService {
         await user.updatePassword(newPassword);
       }
     } catch (e) {
-      print('パスワード更新エラー: $e');
+      debugPrint('パスワード更新エラー: $e');
       throw e;
     }
   }
@@ -105,13 +106,14 @@ class AuthService {
         await user.sendEmailVerification();
       }
     } catch (e) {
-      print('メール認証送信エラー: $e');
+      debugPrint('メール認証送信エラー: $e');
       throw e;
     }
   }
 
   // 再認証
-  Future<void> reauthenticateWithCredential(String email, String password) async {
+  Future<void> reauthenticateWithCredential(
+      String email, String password) async {
     try {
       User? user = _auth.currentUser;
       if (user != null) {
@@ -122,7 +124,7 @@ class AuthService {
         await user.reauthenticateWithCredential(credential);
       }
     } catch (e) {
-      print('再認証エラー: $e');
+      debugPrint('再認証エラー: $e');
       throw e;
     }
   }

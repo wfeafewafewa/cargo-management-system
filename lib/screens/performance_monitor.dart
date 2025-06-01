@@ -118,11 +118,12 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
   Widget _buildMetricsHeader() {
     if (_metrics.isEmpty) return const SizedBox();
 
-    final avgResponseTime = _metrics
-        .map((m) => m.responseTime)
-        .reduce((a, b) => a + b) / _metrics.length;
+    final avgResponseTime =
+        _metrics.map((m) => m.responseTime).reduce((a, b) => a + b) /
+            _metrics.length;
 
-    final successRate = _metrics.where((m) => m.isSuccess).length / _metrics.length;
+    final successRate =
+        _metrics.where((m) => m.isSuccess).length / _metrics.length;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -151,13 +152,14 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
     );
   }
 
-  Widget _buildSummaryCard(String title, String value, IconData icon, Color color) {
+  Widget _buildSummaryCard(
+      String title, String value, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
         children: [
@@ -199,7 +201,7 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
 
   Widget _buildMetricCard(PerformanceMetric metric) {
     final responseTimeColor = _getResponseTimeColor(metric.responseTime);
-    
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: ListTile(
@@ -213,7 +215,7 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: responseTimeColor.withOpacity(0.2),
+                color: responseTimeColor.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
@@ -237,8 +239,8 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
             ),
           ],
         ),
-        trailing: metric.isSuccess 
-            ? null 
+        trailing: metric.isSuccess
+            ? null
             : const Icon(Icons.warning, color: Colors.orange, size: 16),
       ),
     );
@@ -286,13 +288,10 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
 
   Future<void> _testFirestoreRead() async {
     final stopwatch = Stopwatch()..start();
-    
+
     try {
-      await FirebaseFirestore.instance
-          .collection('deliveries')
-          .limit(20)
-          .get();
-      
+      await FirebaseFirestore.instance.collection('deliveries').limit(20).get();
+
       stopwatch.stop();
       _addMetric(PerformanceMetric(
         operation: 'Firestore読み込み (20件)',
@@ -315,16 +314,14 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
 
   Future<void> _testFirestoreWrite() async {
     final stopwatch = Stopwatch()..start();
-    
+
     try {
-      await FirebaseFirestore.instance
-          .collection('performance_test')
-          .add({
+      await FirebaseFirestore.instance.collection('performance_test').add({
         'timestamp': FieldValue.serverTimestamp(),
         'test': 'パフォーマンステスト',
         'value': DateTime.now().millisecondsSinceEpoch,
       });
-      
+
       stopwatch.stop();
       _addMetric(PerformanceMetric(
         operation: 'Firestore書き込み',
@@ -347,7 +344,7 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
 
   Future<void> _testComplexQuery() async {
     final stopwatch = Stopwatch()..start();
-    
+
     try {
       await FirebaseFirestore.instance
           .collection('deliveries')
@@ -355,7 +352,7 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
           .orderBy('createdAt', descending: true)
           .limit(50)
           .get();
-      
+
       stopwatch.stop();
       _addMetric(PerformanceMetric(
         operation: '複雑クエリ',
@@ -378,23 +375,22 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
 
   Future<void> _testBatchOperation() async {
     final stopwatch = Stopwatch()..start();
-    
+
     try {
       final batch = FirebaseFirestore.instance.batch();
-      
+
       for (int i = 0; i < 10; i++) {
-        final ref = FirebaseFirestore.instance
-            .collection('performance_test')
-            .doc();
+        final ref =
+            FirebaseFirestore.instance.collection('performance_test').doc();
         batch.set(ref, {
           'batchTest': true,
           'index': i,
           'timestamp': FieldValue.serverTimestamp(),
         });
       }
-      
+
       await batch.commit();
-      
+
       stopwatch.stop();
       _addMetric(PerformanceMetric(
         operation: 'バッチ処理',

@@ -1,10 +1,9 @@
 // lib/services/notification_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 class NotificationService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  
+
   // 通知作成
   static Future<void> createNotification({
     required String userId,
@@ -25,7 +24,7 @@ class NotificationService {
       'data': data,
     });
   }
-  
+
   // ユーザーの通知取得（リアルタイム）
   Stream<QuerySnapshot> getUserNotifications(String userId) {
     return _firestore
@@ -35,7 +34,7 @@ class NotificationService {
         .limit(20)
         .snapshots();
   }
-  
+
   // 未読通知数取得（リアルタイム）
   Stream<int> getUnreadNotificationCount(String userId) {
     return _firestore
@@ -45,7 +44,7 @@ class NotificationService {
         .snapshots()
         .map((snapshot) => snapshot.docs.length);
   }
-  
+
   // 通知を既読にする
   Future<void> markAsRead(String notificationId) async {
     await _firestore
@@ -53,50 +52,47 @@ class NotificationService {
         .doc(notificationId)
         .update({'isRead': true});
   }
-  
+
   // 全通知を既読にする
   Future<void> markAllAsRead(String userId) async {
     final batch = _firestore.batch();
-    
+
     final notifications = await _firestore
         .collection('notifications')
         .where('userId', isEqualTo: userId)
         .where('isRead', isEqualTo: false)
         .get();
-    
+
     for (var doc in notifications.docs) {
       batch.update(doc.reference, {'isRead': true});
     }
-    
+
     await batch.commit();
   }
-  
+
   // 通知削除
   Future<void> deleteNotification(String notificationId) async {
-    await _firestore
-        .collection('notifications')
-        .doc(notificationId)
-        .delete();
+    await _firestore.collection('notifications').doc(notificationId).delete();
   }
-  
+
   // 古い通知を一括削除（30日以上前）
   Future<void> cleanupOldNotifications(String userId) async {
     final thirtyDaysAgo = DateTime.now().subtract(Duration(days: 30));
-    
+
     final oldNotifications = await _firestore
         .collection('notifications')
         .where('userId', isEqualTo: userId)
         .where('createdAt', isLessThan: Timestamp.fromDate(thirtyDaysAgo))
         .get();
-    
+
     final batch = _firestore.batch();
     for (var doc in oldNotifications.docs) {
       batch.delete(doc.reference);
     }
-    
+
     await batch.commit();
   }
-  
+
   // システム通知の作成（全ユーザー向け）
   static Future<void> createSystemNotification({
     required String title,
@@ -108,14 +104,13 @@ class NotificationService {
         .collection('users')
         .where('isActive', isEqualTo: true)
         .get();
-    
+
     final batch = FirebaseFirestore.instance.batch();
-    
+
     for (var user in users.docs) {
-      final notificationRef = FirebaseFirestore.instance
-          .collection('notifications')
-          .doc();
-      
+      final notificationRef =
+          FirebaseFirestore.instance.collection('notifications').doc();
+
       batch.set(notificationRef, {
         'userId': user.id,
         'title': title,
@@ -126,10 +121,10 @@ class NotificationService {
         'relatedId': relatedId,
       });
     }
-    
+
     await batch.commit();
   }
-  
+
   // 配送関連通知のヘルパーメソッド
   static Future<void> notifyDeliveryAssigned({
     required String driverId,
@@ -144,7 +139,7 @@ class NotificationService {
       relatedId: deliveryId,
     );
   }
-  
+
   static Future<void> notifyDeliveryCompleted({
     required String driverId,
     required String deliveryTitle,
@@ -154,12 +149,13 @@ class NotificationService {
     await createNotification(
       userId: driverId,
       title: '配送完了しました',
-      message: '「$deliveryTitle」の配送が完了しました。売上¥${amount.toStringAsFixed(0)}が記録されました。',
+      message:
+          '「$deliveryTitle」の配送が完了しました。売上¥${amount.toStringAsFixed(0)}が記録されました。',
       type: 'delivery',
       relatedId: deliveryId,
     );
   }
-  
+
   static Future<void> notifyPaymentProcessed({
     required String driverId,
     required double amount,
@@ -173,7 +169,7 @@ class NotificationService {
       relatedId: month,
     );
   }
-  
+
   // 管理者向け通知
   static Future<void> notifyAdminDeliveryCompleted({
     required String adminId,
@@ -189,7 +185,7 @@ class NotificationService {
       relatedId: deliveryId,
     );
   }
-  
+
   static Future<void> notifyAdminNewDriver({
     required String adminId,
     required String driverName,
