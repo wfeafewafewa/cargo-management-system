@@ -1,8 +1,5 @@
 {
-  "framework": "static",
   "outputDirectory": "build/web",
-  "installCommand": "curl -L https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.24.3-stable.tar.xz | tar -xJ",
-  "buildCommand": "export PATH=\"$PATH:$PWD/flutter/bin\" && flutter config --no-analytics && flutter pub get && flutter build web",
   "rewrites": [
     {
       "source": "/(.*)",
