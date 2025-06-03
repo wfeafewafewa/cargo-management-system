@@ -14,6 +14,8 @@ import 'screens/main_navigation_screen.dart';
 import 'screens/advanced_reports_screen.dart';
 import 'screens/sales_management_screen.dart';
 import 'screens/data_management_screen.dart';
+import 'screens/role_selection_screen.dart';
+import 'screens/driver_dashboard_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -53,6 +55,9 @@ class MyApp extends StatelessWidget {
         '/advanced-reports': (context) => AdvancedReportsScreen(),
         '/sales-management': (context) => SalesManagementScreen(),
         '/data-management': (context) => DataManagementScreen(),
+        // 新しいルートを追加
+        '/role-selection': (context) => RoleSelectionScreen(),
+        '/driver-app': (context) => DriverDashboardScreen(),
       },
     );
   }
@@ -248,6 +253,43 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                         ],
+                      ),
+                      // 新しいボタンを追加
+                      SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pushNamed(context, '/role-selection');
+                          },
+                          icon: Icon(Icons.psychology),
+                          label: Text('役割選択画面テスト'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.purple,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pushNamed(context, '/driver-app');
+                          },
+                          icon: Icon(Icons.drive_eta),
+                          label: Text('ドライバーアプリテスト'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.teal,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ),
