@@ -666,37 +666,55 @@ class _AdminDashboardState extends State<AdminDashboard>
                   '配送管理',
                   Icons.local_shipping,
                   Colors.blue,
-                  () => Navigator.pushNamed(context, '/delivery-management'),
+                  () {
+                    print('配送管理がタップされました');
+                    Navigator.pushNamed(context, '/delivery-management');
+                  },
                 ),
                 _buildActionButton(
                   'ドライバー管理',
                   Icons.people,
                   Colors.green,
-                  () => Navigator.pushNamed(context, '/driver-management'),
+                  () {
+                    print('ドライバー管理がタップされました');
+                    Navigator.pushNamed(context, '/driver-management');
+                  },
                 ),
                 _buildActionButton(
                   '売上管理',
                   Icons.attach_money,
                   Colors.orange,
-                  () => Navigator.pushNamed(context, '/sales-management'),
+                  () {
+                    print('売上管理がタップされました');
+                    Navigator.pushNamed(context, '/sales-management');
+                  },
                 ),
                 _buildActionButton(
                   'レポート',
                   Icons.analytics,
                   Colors.purple,
-                  () => Navigator.pushNamed(context, '/advanced-reports'),
+                  () {
+                    print('レポートがタップされました');
+                    Navigator.pushNamed(context, '/advanced-reports');
+                  },
                 ),
                 _buildActionButton(
                   'システム設定',
                   Icons.settings,
                   Colors.deepPurple,
-                  () => Navigator.pushNamed(context, '/system-settings'),
+                  () {
+                    print('システム設定がタップされました');
+                    Navigator.pushNamed(context, '/system-settings');
+                  },
                 ),
                 _buildActionButton(
                   'データ管理',
                   Icons.storage,
                   Colors.teal,
-                  () => Navigator.pushNamed(context, '/data-management'),
+                  () {
+                    print('データ管理がタップされました');
+                    Navigator.pushNamed(context, '/data-management');
+                  },
                 ),
               ],
             ),
@@ -709,7 +727,20 @@ class _AdminDashboardState extends State<AdminDashboard>
   Widget _buildActionButton(
       String label, IconData icon, Color color, VoidCallback onPressed) {
     return ElevatedButton.icon(
-      onPressed: onPressed,
+      onPressed: () {
+        print('$labelボタンがタップされました');
+        try {
+          onPressed();
+        } catch (e) {
+          print('エラー: $e');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('画面遷移エラー: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      },
       icon: Icon(icon, size: 20),
       label: Text(
         label,
@@ -1024,16 +1055,6 @@ class _AdminDashboardState extends State<AdminDashboard>
     } else {
       return '${difference.inDays}日前';
     }
-  }
-
-  void _showComingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature機能は準備中です'),
-        backgroundColor: Colors.orange,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
   }
 
   void _showNotifications() {
