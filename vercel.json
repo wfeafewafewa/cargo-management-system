@@ -1,5 +1,5 @@
 {
-  "buildCommand": "curl -fsSL https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.24.3-stable.tar.xz | tar -xJ && export PATH=\"$PATH:$PWD/flutter/bin\" && flutter pub get && flutter build web --release",
+  "buildCommand": "curl -fsSL https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.24.3-stable.tar.xz | tar -xJ && git config --global --add safe.directory /vercel/path0/flutter && export PATH=\"$PATH:$PWD/flutter/bin\" && flutter config --no-analytics && flutter pub get && flutter build web --release",
   "outputDirectory": "build/web",
   "framework": null,
   "rewrites": [

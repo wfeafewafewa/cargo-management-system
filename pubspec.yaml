@@ -1,52 +1,25 @@
 name: cargo_management
-description: A new Flutter project for cargo management.
+description: "軽貨物業務管理システム"
+
 publish_to: 'none'
+
 version: 1.0.0+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
+  flutter: ">=3.10.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  flutter_localizations:
-    sdk: flutter
-  
-  # Firebase 互換性のある安定版組み合わせ
-  firebase_core: ^3.13.1
-  firebase_auth: ^5.5.4
-  cloud_firestore: ^5.6.8
-  
-  # UI関連
-  cupertino_icons: ^1.0.2
-  intl: ^0.20.2
-  
-  # 状態管理・ユーティリティ
-  provider: ^6.0.5
-  shared_preferences: ^2.2.2
-  
-  # PDF生成
-  pdf: ^3.11.3
-  path_provider: ^2.1.5
-  
-  # データエクスポート・インポート機能
-  csv: ^6.0.0                    # CSV生成・解析
-  universal_html: ^2.2.4         # Web用HTMLダウンロード
-  file_picker: ^10.1.9            # ファイル選択（インポート用）
-  printing: ^5.14.2
+  cloud_firestore: ^5.4.4
+  firebase_core: ^3.6.0
+  cupertino_icons: ^1.0.6
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^3.0.0  # 6.0.0から3.0.0に変更
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/fonts/
-  fonts:
-    - family: NotoSansJP
-      fonts:
-        - asset: assets/fonts/NotoSansJP-Regular.ttf
-        - asset: assets/fonts/NotoSansJP-Bold.ttf
-          weight: 700
