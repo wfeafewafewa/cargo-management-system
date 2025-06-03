@@ -1,5 +1,7 @@
 {
   "outputDirectory": "build/web",
+  "buildCommand": "echo 'Using pre-built Flutter web assets'",
+  "installCommand": "echo 'No install required'",
   "rewrites": [
     {
       "source": "/(.*)",
