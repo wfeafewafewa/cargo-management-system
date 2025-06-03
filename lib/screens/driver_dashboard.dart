@@ -1295,7 +1295,7 @@ class _DriverManagementScreenState extends State<DriverManagementScreen>
                 _buildScheduleStatCard('今日の予定', '5件', Icons.today, Colors.blue),
                 const SizedBox(width: 16),
                 _buildScheduleStatCard(
-                    '明日の予定', '8件', Icons.tomorrow, Colors.orange),
+                    '明日の予定', '8件', Icons.today, Colors.orange),
                 const SizedBox(width: 16),
                 _buildScheduleStatCard(
                     '今週の予定', '32件', Icons.date_range, Colors.green),
@@ -2848,6 +2848,11 @@ class _DriverManagementScreenState extends State<DriverManagementScreen>
   String _formatDate(DateTime date) {
     return '${date.year}/${date.month}/${date.day}';
   }
+}
+
+bool isSameDay(DateTime? a, DateTime? b) {
+  if (a == null || b == null) return false;
+  return a.year == b.year && a.month == b.month && a.day == b.day;
 }
 
 // ドライバー登録・編集フォーム

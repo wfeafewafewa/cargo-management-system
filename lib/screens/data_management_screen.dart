@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:csv/csv.dart';
 import 'dart:convert';
-import 'dart:html' as html;
+import 'package:universal_html/html.dart' as html;
 import '../services/firestore_service.dart';
+import 'package:file_picker/file_picker.dart';
 
 class DataManagementScreen extends StatefulWidget {
   @override
