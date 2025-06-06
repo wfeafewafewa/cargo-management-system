@@ -263,8 +263,8 @@ class _AdminDashboardState extends State<AdminDashboard>
                 const SizedBox(height: 24),
                 _buildStatsSection(),
                 const SizedBox(height: 24),
-                _buildPerformanceMetrics(),
-                const SizedBox(height: 24),
+                // _buildPerformanceMetrics(), // 削除：パフォーマンス指標セクション
+                // const SizedBox(height: 24),
                 _buildQuickActions(),
                 const SizedBox(height: 24),
                 _buildRecentActivity(),
@@ -470,104 +470,8 @@ class _AdminDashboardState extends State<AdminDashboard>
     );
   }
 
-  Widget _buildPerformanceMetrics() {
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.trending_up, color: Colors.green.shade700),
-                const SizedBox(width: 8),
-                const Text(
-                  'パフォーマンス指標',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildPerformanceIndicator(
-                    '完了率',
-                    _stats['completionRate'] ?? 0,
-                    Colors.green,
-                    '%',
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _buildPerformanceIndicator(
-                    'ドライバー稼働率',
-                    _stats['driverUtilization'] ?? 0,
-                    Colors.blue,
-                    '%',
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPerformanceIndicator(
-      String title, int value, Color color, String suffix) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 14,
-              color: Colors.grey,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '$value',
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-              ),
-              Text(
-                suffix,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: color,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(
-            value: value / 100,
-            backgroundColor: color.withValues(alpha: 0.2),
-            valueColor: AlwaysStoppedAnimation<Color>(color),
-          ),
-        ],
-      ),
-    );
-  }
+  // _buildPerformanceMetrics() メソッドを削除
+  // _buildPerformanceIndicator() メソッドを削除
 
   Widget _buildStatCard(String title, String value, IconData icon, Color color,
       {String? subtitle}) {

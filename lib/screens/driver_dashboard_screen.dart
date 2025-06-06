@@ -1,11 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:table_calendar/table_calendar.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:csv/csv.dart';
+import 'dart:html' as html;
 
 class DriverDashboardScreen extends StatefulWidget {
   final String? driverId; // 実際のアプリでは認証から取得
@@ -27,8 +22,9 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
   String _currentDriverId = 'test_driver_001'; // テスト用ID
   Map<String, dynamic> _driverData = {};
   List<Map<String, dynamic>> _todayDeliveries = [];
-  List<Map<String, dynamic>> _todaySchedule = [];
   bool _isLoading = true;
+  bool _isWorking = false; // 稼働状態
+  DateTime? _workStartTime; // 稼働開始時間
 
   @override
   void initState() {
@@ -78,18 +74,14 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
           'name': '田中太郎',
           'phone': '090-1234-5678',
           'email': 'tanaka@example.com',
-          'vehicle': 'トヨタ ハイエース',
-          'license': 'AB123456789',
           'status': '稼働中',
-          'rating': 4.5,
-          'currentDeliveries': 3,
           'createdAt': FieldValue.serverTimestamp(),
           'statusUpdatedAt': FieldValue.serverTimestamp(),
+          'monthlyEarnings': 280000, // 月間売上（ドライバーに支払われる金額）
         });
 
         // テスト用配送データを作成
         await _createTestDeliveries();
-        await _createTestSchedule();
       }
     } catch (e) {
       print('Test data creation error: $e');
@@ -112,13 +104,14 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
         'estimatedDuration': 45,
         'driverId': _currentDriverId,
         'createdAt': FieldValue.serverTimestamp(),
+        // 注意: 受注金額（fee）は意図的に除外
       },
       {
         'id': 'delivery_002',
         'pickupLocation': '東京都品川区品川3-3-3',
         'deliveryLocation': '東京都目黒区目黒4-4-4',
-        'status': 'in_progress',
-        'priority': 'medium',
+        'status': 'assigned',
+        'priority': 'normal',
         'customerName': '佐藤物流',
         'customerPhone': '03-2345-6789',
         'scheduledTime':
@@ -131,8 +124,8 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
         'id': 'delivery_003',
         'pickupLocation': '東京都港区港5-5-5',
         'deliveryLocation': '東京都千代田区千代田6-6-6',
-        'status': 'pending',
-        'priority': 'low',
+        'status': 'assigned',
+        'priority': 'normal',
         'customerName': '鈴木貿易',
         'customerPhone': '03-3456-7890',
         'scheduledTime':
@@ -151,40 +144,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     }
   }
 
-  Future<void> _createTestSchedule() async {
-    final today = DateTime.now();
-    final scheduleEvents = [
-      {
-        'title': '車両点検',
-        'description': '月次定期点検',
-        'type': 'maintenance',
-        'driverId': _currentDriverId,
-        'date': Timestamp.fromDate(today),
-        'startTime': Timestamp.fromDate(
-            DateTime(today.year, today.month, today.day, 9, 0)),
-        'endTime': Timestamp.fromDate(
-            DateTime(today.year, today.month, today.day, 9, 30)),
-        'createdAt': FieldValue.serverTimestamp(),
-      },
-      {
-        'title': '安全講習',
-        'description': 'オンライン安全講習受講',
-        'type': 'training',
-        'driverId': _currentDriverId,
-        'date': Timestamp.fromDate(today),
-        'startTime': Timestamp.fromDate(
-            DateTime(today.year, today.month, today.day, 13, 0)),
-        'endTime': Timestamp.fromDate(
-            DateTime(today.year, today.month, today.day, 14, 0)),
-        'createdAt': FieldValue.serverTimestamp(),
-      },
-    ];
-
-    for (final event in scheduleEvents) {
-      await FirebaseFirestore.instance.collection('schedule_events').add(event);
-    }
-  }
-
   Future<void> _loadDriverData() async {
     setState(() => _isLoading = true);
     try {
@@ -198,7 +157,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
         _driverData = driverDoc.data() ?? {};
       }
 
-      // 今日の配送を取得
+      // 今日の配送を取得（自身がアサインされたもののみ）
       final today = DateTime.now();
       final startOfDay = DateTime(today.year, today.month, today.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
@@ -213,20 +172,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
           .get();
 
       _todayDeliveries = deliveriesQuery.docs
-          .map((doc) => {'id': doc.id, ...doc.data()})
-          .toList();
-
-      // 今日のスケジュールを取得
-      final scheduleQuery = await FirebaseFirestore.instance
-          .collection('schedule_events')
-          .where('driverId', isEqualTo: _currentDriverId)
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-          .where('date', isLessThan: Timestamp.fromDate(endOfDay))
-          .orderBy('date')
-          .orderBy('startTime')
-          .get();
-
-      _todaySchedule = scheduleQuery.docs
           .map((doc) => {'id': doc.id, ...doc.data()})
           .toList();
 
@@ -261,13 +206,9 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
                       delegate: SliverChildListDelegate([
                         _buildQuickActions(),
                         const SizedBox(height: 20),
-                        _buildTodayStats(),
-                        const SizedBox(height: 20),
                         _buildTodayDeliveries(),
                         const SizedBox(height: 20),
-                        _buildTodaySchedule(),
-                        const SizedBox(height: 20),
-                        _buildPerformanceCard(),
+                        _buildMonthlyPerformance(),
                         const SizedBox(height: 100),
                       ]),
                     ),
@@ -275,14 +216,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
                 ],
               ),
             ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showStatusChangeDialog,
-        icon: Icon(_getStatusIcon(_driverData['status'] as String? ?? 'オフライン')),
-        label:
-            Text(_getStatusText(_driverData['status'] as String? ?? 'オフライン')),
-        backgroundColor:
-            _getStatusColor(_driverData['status'] as String? ?? 'オフライン'),
-      ),
     );
   }
 
@@ -325,7 +258,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
                     color: Colors.white.withOpacity(0.2),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
+                  child: const Icon(
                     Icons.person,
                     size: 50,
                     color: Colors.white,
@@ -383,6 +316,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     );
   }
 
+  // 修正: クイックアクションを要件に合わせて変更
   Widget _buildQuickActions() {
     return Card(
       elevation: 4,
@@ -404,41 +338,19 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
               children: [
                 Expanded(
                   child: _buildActionButton(
-                    '配送開始',
-                    Icons.play_arrow,
-                    Colors.green,
-                    () => _startDelivery(),
+                    _isWorking ? '稼働終了' : '稼働開始',
+                    _isWorking ? Icons.stop : Icons.play_arrow,
+                    _isWorking ? Colors.red : Colors.green,
+                    () => _isWorking ? _endWork() : _startWork(),
                   ),
                 ),
                 const SizedBox(width: 12),
-                Expanded(
-                  child: _buildActionButton(
-                    '休憩開始',
-                    Icons.pause,
-                    Colors.orange,
-                    () => _changeStatus('休憩中'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
                 Expanded(
                   child: _buildActionButton(
                     '緊急連絡',
                     Icons.emergency,
                     Colors.red,
                     () => _emergencyContact(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildActionButton(
-                    'ナビ開始',
-                    Icons.navigation,
-                    Colors.blue,
-                    () => _startNavigation(),
                   ),
                 ),
               ],
@@ -479,97 +391,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     );
   }
 
-  Widget _buildTodayStats() {
-    final completedDeliveries =
-        _todayDeliveries.where((d) => d['status'] == 'completed').length;
-    final pendingDeliveries =
-        _todayDeliveries.where((d) => d['status'] != 'completed').length;
-
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '今日の実績',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildStatCard(
-                    '完了',
-                    '$completedDeliveries件',
-                    Icons.check_circle,
-                    Colors.green,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildStatCard(
-                    '残り',
-                    '$pendingDeliveries件',
-                    Icons.pending,
-                    Colors.orange,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildStatCard(
-                    '評価',
-                    '${(_driverData['rating'] as num? ?? 0).toStringAsFixed(1)}★',
-                    Icons.star,
-                    Colors.amber,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatCard(
-      String label, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              color: Colors.grey,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
+  // 修正: 今日の配送（管理者画面でアサインされたもののみ表示）
   Widget _buildTodayDeliveries() {
     return Card(
       elevation: 4,
@@ -597,6 +419,14 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '自身が本日対応するべき配送案件を表示',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+              ),
             ),
             const SizedBox(height: 16),
             if (_todayDeliveries.isEmpty)
@@ -626,7 +456,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
 
   Widget _buildDeliveryItem(Map<String, dynamic> delivery) {
     final status = delivery['status'] as String;
-    final priority = delivery['priority'] as String? ?? 'medium';
+    final priority = delivery['priority'] as String? ?? 'normal';
     final scheduledTime = (delivery['scheduledTime'] as Timestamp?)?.toDate();
 
     Color statusColor;
@@ -655,7 +485,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
       case 'high':
         priorityColor = Colors.red;
         break;
-      case 'medium':
+      case 'normal':
         priorityColor = Colors.orange;
         break;
       default:
@@ -743,182 +573,16 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
             ),
           ],
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _showDeliveryDetails(delivery),
-                  icon: const Icon(Icons.info_outline, size: 16),
-                  label: const Text('詳細'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: statusColor,
-                    side: BorderSide(color: statusColor),
-                  ),
-                ),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _showDeliveryDetails(delivery),
+              icon: const Icon(Icons.info_outline, size: 16),
+              label: const Text('詳細確認'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: statusColor,
+                side: BorderSide(color: statusColor),
               ),
-              const SizedBox(width: 8),
-              if (status != 'completed')
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => _updateDeliveryStatus(delivery),
-                    icon: Icon(_getNextStatusIcon(status), size: 16),
-                    label: Text(_getNextStatusText(status)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: statusColor,
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTodaySchedule() {
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  '今日のスケジュール',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  '${_todaySchedule.length}件',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            if (_todaySchedule.isEmpty)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Column(
-                    children: [
-                      Icon(Icons.event_available, size: 64, color: Colors.grey),
-                      SizedBox(height: 16),
-                      Text(
-                        '今日の予定はありません',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              ..._todaySchedule.map((schedule) => _buildScheduleItem(schedule)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildScheduleItem(Map<String, dynamic> schedule) {
-    final type = schedule['type'] as String? ?? 'general';
-    final title = schedule['title'] as String? ?? 'タイトルなし';
-    final description = schedule['description'] as String? ?? '';
-    final startTime = (schedule['startTime'] as Timestamp?)?.toDate();
-    final endTime = (schedule['endTime'] as Timestamp?)?.toDate();
-
-    Color typeColor;
-    IconData typeIcon;
-
-    switch (type) {
-      case 'delivery':
-        typeColor = Colors.green;
-        typeIcon = Icons.local_shipping;
-        break;
-      case 'maintenance':
-        typeColor = Colors.orange;
-        typeIcon = Icons.build;
-        break;
-      case 'break':
-        typeColor = Colors.grey;
-        typeIcon = Icons.pause;
-        break;
-      case 'training':
-        typeColor = Colors.purple;
-        typeIcon = Icons.school;
-        break;
-      default:
-        typeColor = Colors.blue;
-        typeIcon = Icons.event;
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: typeColor.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: typeColor.withOpacity(0.3)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: typeColor,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(typeIcon, color: Colors.white, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-                if (description.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    description,
-                    style: const TextStyle(
-                      color: Colors.grey,
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-                if (startTime != null) ...[
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(Icons.access_time,
-                          size: 16, color: Colors.grey),
-                      const SizedBox(width: 4),
-                      Text(
-                        _formatScheduleTime(startTime, endTime),
-                        style: const TextStyle(
-                          color: Colors.grey,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
             ),
           ),
         ],
@@ -926,9 +590,9 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     );
   }
 
-  Widget _buildPerformanceCard() {
-    final rating = (_driverData['rating'] as num? ?? 0).toDouble();
-    final currentDeliveries = _driverData['currentDeliveries'] as num? ?? 0;
+  // 修正: 今月のパフォーマンスを総売上額のみに簡素化
+  Widget _buildMonthlyPerformance() {
+    final monthlyEarnings = _driverData['monthlyEarnings'] as num? ?? 0;
 
     return Card(
       elevation: 4,
@@ -946,46 +610,42 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
               ),
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildPerformanceItem(
-                    '総配送',
-                    '${currentDeliveries.round()}件',
-                    Icons.local_shipping,
-                    Colors.blue,
-                  ),
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.green.withOpacity(0.3)),
                 ),
-                Expanded(
-                  child: _buildPerformanceItem(
-                    '平均評価',
-                    '${rating.toStringAsFixed(1)}★',
-                    Icons.star,
-                    Colors.amber,
-                  ),
+                child: Column(
+                  children: [
+                    const Icon(
+                      Icons.account_balance_wallet,
+                      color: Colors.green,
+                      size: 48,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      '今月の総売上額',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.grey,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '¥${_formatNumber(monthlyEarnings.round())}',
+                      style: const TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildPerformanceItem(
-                    '完了率',
-                    '95%',
-                    Icons.check_circle,
-                    Colors.green,
-                  ),
-                ),
-                Expanded(
-                  child: _buildPerformanceItem(
-                    '稼働時間',
-                    '8.2h',
-                    Icons.timer,
-                    Colors.orange,
-                  ),
-                ),
-              ],
+              ),
             ),
           ],
         ),
@@ -993,129 +653,70 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     );
   }
 
-  Widget _buildPerformanceItem(
-      String label, String value, IconData icon, Color color) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              color: Colors.grey,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  // 稼働開始機能
+  void _startWork() {
+    setState(() {
+      _isWorking = true;
+      _workStartTime = DateTime.now();
+    });
 
-  // アクションメソッド
-  void _showStatusChangeDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('ステータス変更'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.work, color: Colors.green),
-              title: const Text('稼働中'),
-              onTap: () => _changeStatus('稼働中'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.pause, color: Colors.orange),
-              title: const Text('休憩中'),
-              onTap: () => _changeStatus('休憩中'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.offline_bolt, color: Colors.grey),
-              title: const Text('オフライン'),
-              onTap: () => _changeStatus('オフライン'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('キャンセル'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _changeStatus(String newStatus) async {
-    Navigator.pop(context);
-
-    try {
-      await FirebaseFirestore.instance
-          .collection('drivers')
-          .doc(_currentDriverId)
-          .update({
-        'status': newStatus,
-        'statusUpdatedAt': FieldValue.serverTimestamp(),
-      });
-
-      setState(() {
-        _driverData['status'] = newStatus;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('ステータスを「$newStatus」に変更しました'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('エラー: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  void _startDelivery() {
-    final pendingDelivery = _todayDeliveries
-        .where((d) => d['status'] == 'assigned' || d['status'] == 'pending')
-        .isNotEmpty;
-
-    if (!pendingDelivery) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('開始可能な配送がありません'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    _changeStatus('稼働中');
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('配送を開始しました'),
+        content: Text('稼働を開始しました'),
         backgroundColor: Colors.green,
       ),
     );
+  }
+
+  // 稼働終了機能（レポート付き）
+  void _endWork() {
+    showDialog(
+      context: context,
+      builder: (context) => _WorkReportDialog(
+        workStartTime: _workStartTime,
+        todayDeliveries: _todayDeliveries,
+        onSubmit: (reportData) {
+          _submitWorkReport(reportData);
+        },
+      ),
+    );
+  }
+
+  void _submitWorkReport(Map<String, dynamic> reportData) {
+    setState(() {
+      _isWorking = false;
+      _workStartTime = null;
+    });
+
+    // レポートデータを管理者画面に送信
+    _sendReportToAdmin(reportData);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('稼働終了レポートを送信しました'),
+        backgroundColor: Colors.blue,
+      ),
+    );
+  }
+
+  Future<void> _sendReportToAdmin(Map<String, dynamic> reportData) async {
+    try {
+      await FirebaseFirestore.instance.collection('work_reports').add({
+        'driverId': _currentDriverId,
+        'driverName': _driverData['name'],
+        'workDate': Timestamp.fromDate(DateTime.now()),
+        'workStartTime':
+            _workStartTime != null ? Timestamp.fromDate(_workStartTime!) : null,
+        'workEndTime': Timestamp.fromDate(DateTime.now()),
+        'selectedDelivery': reportData['selectedDelivery'],
+        'unitPrice': reportData['unitPrice'],
+        'totalAmount': reportData['totalAmount'],
+        'expenseReceipt': reportData['expenseReceipt'],
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('レポート送信エラー: $e');
+    }
   }
 
   void _emergencyContact() {
@@ -1153,15 +754,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     );
   }
 
-  void _startNavigation() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('ナビゲーションアプリを起動中...'),
-        backgroundColor: Colors.blue,
-      ),
-    );
-  }
-
   void _showDeliveryDetails(Map<String, dynamic> delivery) {
     showDialog(
       context: context,
@@ -1178,6 +770,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
                 'お客様電話', delivery['customerPhone'] as String? ?? ''),
             _buildDetailRow('ステータス', delivery['status'] as String? ?? ''),
             _buildDetailRow('優先度', delivery['priority'] as String? ?? ''),
+            // 注意: 受注金額は表示しない
           ],
         ),
         actions: [
@@ -1185,14 +778,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
             onPressed: () => Navigator.pop(context),
             child: const Text('閉じる'),
           ),
-          if (delivery['status'] != 'completed')
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _updateDeliveryStatus(delivery);
-              },
-              child: Text(_getNextStatusText(delivery['status'] as String)),
-            ),
         ],
       ),
     );
@@ -1215,52 +800,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
         ],
       ),
     );
-  }
-
-  Future<void> _updateDeliveryStatus(Map<String, dynamic> delivery) async {
-    final currentStatus = delivery['status'] as String;
-    String nextStatus;
-
-    switch (currentStatus) {
-      case 'assigned':
-      case 'pending':
-        nextStatus = 'in_progress';
-        break;
-      case 'in_progress':
-        nextStatus = 'completed';
-        break;
-      default:
-        return;
-    }
-
-    try {
-      await FirebaseFirestore.instance
-          .collection('deliveries')
-          .doc(delivery['id'] as String)
-          .update({
-        'status': nextStatus,
-        'updatedAt': FieldValue.serverTimestamp(),
-        if (nextStatus == 'completed')
-          'completedAt': FieldValue.serverTimestamp(),
-      });
-
-      _loadDriverData();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content:
-              Text('配送ステータスを「${_getStatusDisplayName(nextStatus)}」に更新しました'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('エラー: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
   }
 
   // ヘルパーメソッド
@@ -1290,67 +829,341 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     }
   }
 
-  String _getStatusText(String status) {
-    switch (status) {
-      case '稼働中':
-        return '稼働中';
-      case '休憩中':
-        return '休憩中';
-      case 'オフライン':
-        return 'オフライン';
-      default:
-        return 'ステータス変更';
+  String _formatNumber(int number) {
+    return number.toString().replaceAllMapped(
+          RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+          (Match m) => '${m[1]},',
+        );
+  }
+}
+
+// 稼働終了レポートダイアログ
+class _WorkReportDialog extends StatefulWidget {
+  final DateTime? workStartTime;
+  final List<Map<String, dynamic>> todayDeliveries;
+  final Function(Map<String, dynamic>) onSubmit;
+
+  const _WorkReportDialog({
+    required this.workStartTime,
+    required this.todayDeliveries,
+    required this.onSubmit,
+  });
+
+  @override
+  State<_WorkReportDialog> createState() => _WorkReportDialogState();
+}
+
+class _WorkReportDialogState extends State<_WorkReportDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _unitPriceController = TextEditingController();
+  final _totalAmountController = TextEditingController();
+
+  String? _selectedDeliveryId;
+  String _expenseReceipt = ''; // 立替費用の領収書画像
+  bool _isLoading = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final workDuration = widget.workStartTime != null
+        ? DateTime.now().difference(widget.workStartTime!)
+        : Duration.zero;
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          Icon(Icons.assignment_turned_in, color: Colors.blue.shade700),
+          const SizedBox(width: 8),
+          const Text('稼働終了レポート'),
+        ],
+      ),
+      content: SizedBox(
+        width: 500,
+        height: 600,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 稼働時間表示
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '稼働時間',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${workDuration.inHours}時間${workDuration.inMinutes % 60}分',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue,
+                        ),
+                      ),
+                      if (widget.workStartTime != null)
+                        Text(
+                          '${widget.workStartTime!.hour.toString().padLeft(2, '0')}:${widget.workStartTime!.minute.toString().padLeft(2, '0')} ～ ${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+                          style: const TextStyle(color: Colors.grey),
+                        ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                // 必須: 案件選択
+                const Text(
+                  '案件 *',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  value: _selectedDeliveryId,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: '今日の配送案件から選択',
+                  ),
+                  items: widget.todayDeliveries.map((delivery) {
+                    return DropdownMenuItem<String>(
+                      value: delivery['id'] as String,
+                      child: Text(
+                        '${delivery['customerName']} (${delivery['pickupLocation']})',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedDeliveryId = value;
+                    });
+                  },
+                  validator: (value) => value == null ? '案件を選択してください' : null,
+                ),
+
+                const SizedBox(height: 20),
+
+                // 必須: 支払われるべき単価
+                const Text(
+                  '支払われるべき単価 *',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _unitPriceController,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: '例: 5000',
+                    suffixText: '円',
+                  ),
+                  keyboardType: TextInputType.number,
+                  validator: (value) =>
+                      value?.isEmpty == true ? '必須項目です' : null,
+                  onChanged: (value) {
+                    _updateTotalAmount();
+                  },
+                ),
+
+                const SizedBox(height: 20),
+
+                // 必須: 支払われるべき総額
+                const Text(
+                  '支払われるべき総額 *',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _totalAmountController,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: '例: 5000',
+                    suffixText: '円',
+                  ),
+                  keyboardType: TextInputType.number,
+                  validator: (value) =>
+                      value?.isEmpty == true ? '必須項目です' : null,
+                ),
+
+                const SizedBox(height: 20),
+
+                // 任意: 画像アップロード（立替費用の領収書）
+                const Text(
+                  '画像アップロード（任意）',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '立替費用の領収書',
+                        style: TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: _selectExpenseReceipt,
+                              icon: Icon(_expenseReceipt.isNotEmpty
+                                  ? Icons.edit
+                                  : Icons.file_upload),
+                              label: Text(
+                                  _expenseReceipt.isNotEmpty ? '変更' : '選択'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                              ),
+                            ),
+                          ),
+                          if (_expenseReceipt.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: () {
+                                setState(() {
+                                  _expenseReceipt = '';
+                                });
+                              },
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              tooltip: '削除',
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (_expenseReceipt.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade100,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.check,
+                                  color: Colors.green.shade700, size: 16),
+                              const SizedBox(width: 4),
+                              const Text(
+                                '画像がアップロードされました',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('キャンセル'),
+        ),
+        ElevatedButton(
+          onPressed: _isLoading ? null : _submitReport,
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+          child: _isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('送信'),
+        ),
+      ],
+    );
+  }
+
+  void _updateTotalAmount() {
+    final unitPrice = int.tryParse(_unitPriceController.text) ?? 0;
+    _totalAmountController.text = unitPrice.toString();
+  }
+
+  void _selectExpenseReceipt() async {
+    final input = html.FileUploadInputElement()
+      ..accept = 'image/*'
+      ..click();
+
+    await input.onChange.first;
+    if (input.files!.isNotEmpty) {
+      final file = input.files![0];
+      final reader = html.FileReader();
+      reader.readAsDataUrl(file);
+
+      await reader.onLoad.first;
+      final dataUrl = reader.result as String;
+
+      setState(() {
+        _expenseReceipt = dataUrl;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('領収書画像をアップロードしました'),
+          backgroundColor: Colors.green,
+        ),
+      );
     }
   }
 
-  IconData _getNextStatusIcon(String currentStatus) {
-    switch (currentStatus) {
-      case 'assigned':
-      case 'pending':
-        return Icons.play_arrow;
-      case 'in_progress':
-        return Icons.check;
-      default:
-        return Icons.update;
-    }
+  void _submitReport() {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    final reportData = {
+      'selectedDelivery': _selectedDeliveryId,
+      'unitPrice': int.tryParse(_unitPriceController.text) ?? 0,
+      'totalAmount': int.tryParse(_totalAmountController.text) ?? 0,
+      'expenseReceipt': _expenseReceipt,
+    };
+
+    // 少し遅延を入れてリアルな感じを演出
+    Future.delayed(const Duration(seconds: 1), () {
+      setState(() => _isLoading = false);
+      Navigator.pop(context);
+      widget.onSubmit(reportData);
+    });
   }
 
-  String _getNextStatusText(String currentStatus) {
-    switch (currentStatus) {
-      case 'assigned':
-      case 'pending':
-        return '開始';
-      case 'in_progress':
-        return '完了';
-      default:
-        return '更新';
-    }
-  }
-
-  String _getStatusDisplayName(String status) {
-    switch (status) {
-      case 'assigned':
-        return '割り当て済み';
-      case 'pending':
-        return '待機中';
-      case 'in_progress':
-        return '配送中';
-      case 'completed':
-        return '完了';
-      default:
-        return status;
-    }
-  }
-
-  String _formatScheduleTime(DateTime? startTime, DateTime? endTime) {
-    if (startTime == null) return '';
-
-    final start =
-        '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}';
-    if (endTime == null) return start;
-
-    final end =
-        '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}';
-    return '$start - $end';
+  @override
+  void dispose() {
+    _unitPriceController.dispose();
+    _totalAmountController.dispose();
+    super.dispose();
   }
 }

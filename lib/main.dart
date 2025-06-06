@@ -1,22 +1,17 @@
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'firebase_options.dart';
-import 'services/auth_service.dart';
-import 'services/firestore_service.dart';
+
+// 修正版の画面をインポート
 import 'screens/admin_dashboard.dart';
-import 'screens/driver_management_screen.dart';
-import 'screens/performance_monitor.dart';
-import 'screens/system_settings.dart';
-import 'screens/delivery_management_screen.dart';
-import 'screens/main_navigation_screen.dart';
-import 'screens/advanced_reports_screen.dart';
-import 'screens/sales_management_screen.dart';
-import 'screens/data_management_screen.dart';
-import 'screens/role_selection_screen.dart';
+import 'screens/delivery_management_screen.dart' as delivery;
+import 'screens/driver_management_screen.dart' as driver;
 import 'screens/driver_dashboard_screen.dart';
+import 'screens/main_navigation_screen.dart';
+import 'screens/role_selection_screen.dart';
+import 'screens/sales_management_unified.dart'; // 追加
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,25 +41,20 @@ class MyApp extends StatelessWidget {
       home: AuthWrapper(),
       routes: {
         '/login': (context) => LoginScreen(),
-        '/main': (context) => MainNavigationScreen(),
-        '/admin-dashboard': (context) => AdminDashboard(),
-        '/driver-dashboard': (context) => DriverManagementScreen(),
-        '/performance-monitor': (context) => PerformanceMonitor(),
-        '/system-settings': (context) => SystemSettingsScreen(),
-        '/delivery-management': (context) => DeliveryManagementScreen(),
-        '/driver-management': (context) => DriverManagementScreen(),
-        '/advanced-reports': (context) => AdvancedReportsScreen(),
-        '/sales-management': (context) => SalesManagementScreen(),
-        '/data-management': (context) => DataManagementScreen(),
-        // 新しいルートを追加
         '/role-selection': (context) => RoleSelectionScreen(),
+        '/admin-dashboard': (context) => AdminDashboard(),
+        '/delivery-management': (context) =>
+            delivery.DeliveryManagementScreen(),
+        '/driver-management': (context) => driver.DriverManagementScreen(),
         '/driver-app': (context) => DriverDashboardScreen(),
+        '/sales-management': (context) => SalesManagementUnifiedScreen(), // 追加
       },
+      debugShowCheckedModeBanner: false,
     );
   }
 }
 
-// AuthWrapperを修正：ログイン後はMainNavigationScreenに遷移
+// AuthWrapperを修正
 class AuthWrapper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -78,12 +68,145 @@ class AuthWrapper extends StatelessWidget {
         }
 
         if (snapshot.hasData) {
-          // ログイン済みの場合、MainNavigationScreenに遷移
-          return MainNavigationScreen();
+          // ログイン成功時はRoleSelectionScreenに遷移
+          return RoleSelectionScreen();
         }
 
         return LoginScreen();
       },
+    );
+  }
+}
+
+// 一時的なテスト用ナビゲーション画面
+class TestNavigationScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('テスト用ナビゲーション'),
+        backgroundColor: Colors.blue.shade700,
+        foregroundColor: Colors.white,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: GridView.count(
+          crossAxisCount: 3, // 2から3に変更
+          mainAxisSpacing: 16,
+          crossAxisSpacing: 16,
+          children: [
+            _buildNavCard(
+              context,
+              '管理者ダッシュボード',
+              Icons.dashboard,
+              Colors.blue,
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => AdminDashboard()),
+              ),
+            ),
+            _buildNavCard(
+              context,
+              '配送案件管理',
+              Icons.local_shipping,
+              Colors.green,
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => delivery.DeliveryManagementScreen()),
+              ),
+            ),
+            _buildNavCard(
+              context,
+              'ドライバー管理',
+              Icons.people,
+              Colors.orange,
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => driver.DriverManagementScreen()),
+              ),
+            ),
+            _buildNavCard(
+              context,
+              'ドライバーアプリ',
+              Icons.drive_eta,
+              Colors.purple,
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => DriverDashboardScreen()),
+              ),
+            ),
+            _buildNavCard(
+              context,
+              '管理者メイン画面',
+              Icons.admin_panel_settings,
+              Colors.indigo,
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) =>
+                        MainNavigationScreen(userRole: 'admin')),
+              ),
+            ),
+            _buildNavCard(
+              context,
+              'ドライバーメイン画面',
+              Icons.drive_eta,
+              Colors.teal,
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) =>
+                        MainNavigationScreen(userRole: 'driver')),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavCard(
+    BuildContext context,
+    String title,
+    IconData icon,
+    Color color,
+    VoidCallback onTap,
+  ) {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 32),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -94,8 +217,6 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final AuthService _authService = AuthService();
-  final FirestoreService _firestoreService = FirestoreService();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
@@ -255,36 +376,23 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ],
                       ),
-                      // 新しいボタンを追加
+                      // 一時的に直接画面へのボタンを追加
                       SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
                           onPressed: () {
-                            Navigator.pushNamed(context, '/role-selection');
+                            Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => TestNavigationScreen(),
+                              ),
+                            );
                           },
-                          icon: Icon(Icons.psychology),
-                          label: Text('役割選択画面テスト'),
+                          icon: Icon(Icons.dashboard),
+                          label: Text('画面テスト（認証スキップ）'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.purple,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                        ),
-                      ),
-                      SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.pushNamed(context, '/driver-app');
-                          },
-                          icon: Icon(Icons.drive_eta),
-                          label: Text('ドライバーアプリテスト'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.teal,
                             foregroundColor: Colors.white,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
@@ -316,28 +424,23 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       User? user;
       if (_isRegisterMode) {
-        user = await _authService.registerWithEmail(
-          _emailController.text,
-          _passwordController.text,
+        final credential =
+            await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: _emailController.text,
+          password: _passwordController.text,
         );
-
-        if (user != null) {
-          await _firestoreService.createOrUpdateUser(
-            userId: user.uid,
-            email: user.email!,
-            role: 'admin',
-            name: _emailController.text.split('@')[0],
-          );
-        }
+        user = credential.user;
       } else {
-        user = await _authService.signInWithEmail(
-          _emailController.text,
-          _passwordController.text,
+        final credential =
+            await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: _emailController.text,
+          password: _passwordController.text,
         );
+        user = credential.user;
       }
 
       if (user != null) {
-        // ログイン成功時はAuthWrapperが自動的にMainNavigationScreenにリダイレクト
+        // ログイン成功時はAuthWrapperが自動的にリダイレクト
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -357,19 +460,17 @@ class _LoginScreenState extends State<LoginScreen> {
           : 'driver@doubletech.co.jp';
       final password = '${role}123';
 
-      User? user = await _authService.signInWithEmail(email, password);
-
-      if (user == null) {
-        user = await _authService.registerWithEmail(email, password);
-
-        if (user != null) {
-          await _firestoreService.createOrUpdateUser(
-            userId: user.uid,
-            email: email,
-            role: role,
-            name: role == 'admin' ? '管理者' : 'テストドライバー',
-          );
-        }
+      try {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      } catch (e) {
+        // アカウントが存在しない場合は作成
+        await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
