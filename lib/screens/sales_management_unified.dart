@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
-import 'dart:typed_data';
+import 'package:intl/intl.dart';
+import 'dart:typed_data'; // Uint8List用
+import '../services/pdf_service.dart'; // PDF Serviceをインポート
 
 class SalesManagementUnifiedScreen extends StatefulWidget {
   @override
@@ -153,6 +152,8 @@ class _SalesManagementUnifiedScreenState
     return '${hours}h${minutes}m';
   }
 
+  // ===== 修正されたPDF生成機能（PdfServiceを使用） =====
+
   Future<void> _generateInvoicePDF() async {
     if (_selectedCustomer == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -161,90 +162,39 @@ class _SalesManagementUnifiedScreenState
       return;
     }
 
-    final pdf = pw.Document();
+    try {
+      // 顧客別・案件別の集計
+      final customerDeliveries = _deliveries
+          .where((delivery) => delivery['customerName'] == _selectedCustomer)
+          .toList();
 
-    // 顧客別・案件別の集計
-    final customerDeliveries = _deliveries
-        .where((delivery) => delivery['customerName'] == _selectedCustomer)
-        .toList();
-
-    // 案件ごとにグループ化
-    final Map<String, List<Map<String, dynamic>>> projectGroups = {};
-    for (final delivery in customerDeliveries) {
-      final projectName = delivery['projectName'] ?? '未設定';
-      if (!projectGroups.containsKey(projectName)) {
-        projectGroups[projectName] = [];
+      if (customerDeliveries.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('選択した顧客の配送データがありません')),
+        );
+        return;
       }
-      projectGroups[projectName]!.add(delivery);
+
+      // PdfServiceを使用してPDF生成
+      final pdfBytes = await PdfService.generateInvoice(
+        customerId: 'customer_001',
+        customerName: _selectedCustomer!, // 英語版なので顧客名はそのまま
+        deliveries: customerDeliveries,
+        startDate: _startDate ?? DateTime.now().subtract(Duration(days: 30)),
+        endDate: _endDate ?? DateTime.now(),
+      );
+
+      // PDF表示オプションダイアログを表示
+      _showPdfOptionsDialog(
+        pdfBytes,
+        'Invoice_${_selectedCustomer}_${DateFormat('yyyyMM').format(DateTime.now())}.pdf',
+        'Invoice',
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('PDF生成エラー: $e')),
+      );
     }
-
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              // ヘッダー
-              pw.Text('請求書',
-                  style: pw.TextStyle(
-                      fontSize: 24, fontWeight: pw.FontWeight.bold)),
-              pw.SizedBox(height: 20),
-
-              // 顧客情報
-              pw.Text('顧客名: $_selectedCustomer',
-                  style: pw.TextStyle(fontSize: 16)),
-              pw.Text('発行日: ${DateTime.now().toString().split(' ')[0]}',
-                  style: pw.TextStyle(fontSize: 14)),
-              pw.SizedBox(height: 30),
-
-              // 案件別明細
-              pw.Text('案件別明細',
-                  style: pw.TextStyle(
-                      fontSize: 18, fontWeight: pw.FontWeight.bold)),
-              pw.SizedBox(height: 10),
-
-              ...projectGroups.entries.map((entry) {
-                final projectName = entry.key;
-                final deliveries = entry.value;
-                final totalAmount = deliveries.fold<double>(
-                    0,
-                    (sum, delivery) =>
-                        sum + (delivery['fee']?.toDouble() ?? 0));
-
-                return pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text('案件名: $projectName',
-                        style: pw.TextStyle(
-                            fontSize: 14, fontWeight: pw.FontWeight.bold)),
-                    pw.Text('配送回数: ${deliveries.length}回'),
-                    pw.Text('合計金額: ¥${totalAmount.toStringAsFixed(0)}'),
-                    pw.SizedBox(height: 10),
-                  ],
-                );
-              }).toList(),
-
-              pw.SizedBox(height: 20),
-
-              // 総合計
-              pw.Container(
-                padding: pw.EdgeInsets.all(10),
-                decoration: pw.BoxDecoration(border: pw.Border.all()),
-                child: pw.Text(
-                  '総合計: ¥${customerDeliveries.fold<double>(0, (sum, delivery) => sum + (delivery['fee']?.toDouble() ?? 0)).toStringAsFixed(0)}',
-                  style: pw.TextStyle(
-                      fontSize: 16, fontWeight: pw.FontWeight.bold),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-
-    await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdf.save());
   }
 
   Future<void> _generatePaymentNoticePDF() async {
@@ -255,99 +205,85 @@ class _SalesManagementUnifiedScreenState
       return;
     }
 
-    final pdf = pw.Document();
+    try {
+      // ドライバーの稼働レポートを取得
+      final driverReports = _workReports
+          .where((report) => report['driverName'] == _selectedDriver)
+          .toList();
 
-    // ドライバーの稼働レポートを取得
-    final driverReports = _workReports
-        .where((report) => report['driverName'] == _selectedDriver)
-        .toList();
+      if (driverReports.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('選択したドライバーの稼働データがありません')),
+        );
+        return;
+      }
 
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              // ヘッダー
-              pw.Text('支払通知書',
-                  style: pw.TextStyle(
-                      fontSize: 24, fontWeight: pw.FontWeight.bold)),
-              pw.SizedBox(height: 20),
+      // PdfServiceを使用してPDF生成
+      final pdfBytes = await PdfService.generatePaymentNotice(
+        driverId: 'driver_001',
+        driverName: _selectedDriver!, // 英語版なので名前はそのまま
+        workReports: driverReports,
+        startDate: _startDate ?? DateTime.now().subtract(Duration(days: 30)),
+        endDate: _endDate ?? DateTime.now(),
+      );
 
-              // ドライバー情報
-              pw.Text('ドライバー名: $_selectedDriver',
-                  style: pw.TextStyle(fontSize: 16)),
-              pw.Text('発行日: ${DateTime.now().toString().split(' ')[0]}',
-                  style: pw.TextStyle(fontSize: 14)),
-              pw.SizedBox(height: 30),
+      // PDF表示オプションダイアログを表示
+      _showPdfOptionsDialog(
+        pdfBytes,
+        'PaymentNotice_${_selectedDriver}_${DateFormat('yyyyMM').format(DateTime.now())}.pdf',
+        'Payment Notice',
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('PDF生成エラー: $e')),
+      );
+    }
+  }
 
-              // 稼働明細
-              pw.Text('稼働明細',
-                  style: pw.TextStyle(
-                      fontSize: 18, fontWeight: pw.FontWeight.bold)),
-              pw.SizedBox(height: 10),
-
-              // テーブルヘッダー
-              pw.Row(
-                children: [
-                  pw.Expanded(
-                      child: pw.Text('作業日',
-                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-                  pw.Expanded(
-                      child: pw.Text('案件',
-                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-                  pw.Expanded(
-                      child: pw.Text('単価',
-                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-                  pw.Expanded(
-                      child: pw.Text('支払額',
-                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-                ],
-              ),
-              pw.Divider(),
-
-              // 稼働データ
-              ...driverReports.map((report) {
-                final workDate = (report['workDate'] as Timestamp?)?.toDate();
-                final dateStr = workDate?.toString().split(' ')[0] ?? '不明';
-
-                return pw.Row(
-                  children: [
-                    pw.Expanded(child: pw.Text(dateStr)),
-                    pw.Expanded(
-                        child: pw.Text(report['selectedDelivery'] ?? '不明')),
-                    pw.Expanded(
-                        child: pw.Text(
-                            '¥${report['unitPrice']?.toString() ?? '0'}')),
-                    pw.Expanded(
-                        child: pw.Text(
-                            '¥${report['totalAmount']?.toString() ?? '0'}')),
-                  ],
-                );
-              }).toList(),
-
-              pw.SizedBox(height: 20),
-
-              // 総合計
-              pw.Container(
-                padding: pw.EdgeInsets.all(10),
-                decoration: pw.BoxDecoration(border: pw.Border.all()),
-                child: pw.Text(
-                  '総支払額: ¥${driverReports.fold<double>(0, (sum, report) => sum + (report['totalAmount']?.toDouble() ?? 0)).toStringAsFixed(0)}',
-                  style: pw.TextStyle(
-                      fontSize: 16, fontWeight: pw.FontWeight.bold),
-                ),
-              ),
-            ],
-          );
-        },
+  // PDF出力オプションダイアログ（PdfServiceのメソッドを使用）
+  void _showPdfOptionsDialog(
+      Uint8List pdfBytes, String filename, String title) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('$title - 出力オプション'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.preview, color: Colors.blue),
+              title: const Text('プレビュー'),
+              subtitle: const Text('PDFを画面で確認'),
+              onTap: () async {
+                Navigator.pop(context);
+                await PdfService.previewPdf(pdfBytes, title);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.print, color: Colors.green),
+              title: const Text('印刷'),
+              subtitle: const Text('直接印刷'),
+              onTap: () async {
+                Navigator.pop(context);
+                await PdfService.printPdf(pdfBytes, title);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.download, color: Colors.orange),
+              title: const Text('ダウンロード'),
+              subtitle: const Text('ファイルとして保存'),
+              onTap: () async {
+                Navigator.pop(context);
+                await PdfService.downloadPdf(pdfBytes, filename);
+              },
+            ),
+          ],
+        ),
       ),
     );
-
-    await Printing.layoutPdf(
-        onLayout: (PdfPageFormat format) async => pdf.save());
   }
+
+  // ===== 既存のUI構築メソッド =====
 
   Widget _buildFilterSection() {
     return Card(
@@ -471,34 +407,101 @@ class _SalesManagementUnifiedScreenState
             Text('PDF出力',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _generateInvoicePDF,
-                    icon: Icon(Icons.receipt),
-                    label: Text('請求書'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      foregroundColor: Colors.white,
+
+            // 請求書生成セクション
+            Container(
+              margin: EdgeInsets.only(bottom: 16),
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.receipt_long, color: Colors.blue.shade700),
+                      SizedBox(width: 8),
+                      Text(
+                        '請求書生成',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    '顧客ごと・案件ごとの請求書を作成します',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                  SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _generateInvoicePDF,
+                      icon: Icon(Icons.receipt),
+                      label: Text('請求書を生成'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                      ),
                     ),
                   ),
-                ),
-                SizedBox(width: 16),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _generatePaymentNoticePDF,
-                    icon: Icon(Icons.payment),
-                    label: Text('支払通知書'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-            SizedBox(height: 8),
+
+            // 支払通知書生成セクション
+            Container(
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.payment, color: Colors.green.shade700),
+                      SizedBox(width: 8),
+                      Text(
+                        '支払通知書生成',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'ドライバーごとの稼働明細・支払通知書を作成します',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                  SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _generatePaymentNoticePDF,
+                      icon: Icon(Icons.payment),
+                      label: Text('支払通知書を生成'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            SizedBox(height: 16),
             Text(
               '※請求書は顧客選択時、支払通知書はドライバー選択時に出力可能',
               style: TextStyle(fontSize: 12, color: Colors.grey[600]),
@@ -534,7 +537,8 @@ class _SalesManagementUnifiedScreenState
                       Text('総売上',
                           style:
                               TextStyle(fontSize: 14, color: Colors.grey[600])),
-                      Text('¥${totalRevenue.toStringAsFixed(0)}',
+                      Text(
+                          '¥${NumberFormat('#,###').format(totalRevenue.round())}',
                           style: TextStyle(
                               fontSize: 24,
                               fontWeight: FontWeight.bold,
@@ -548,7 +552,8 @@ class _SalesManagementUnifiedScreenState
                       Text('総支払額',
                           style:
                               TextStyle(fontSize: 14, color: Colors.grey[600])),
-                      Text('¥${totalPayments.toStringAsFixed(0)}',
+                      Text(
+                          '¥${NumberFormat('#,###').format(totalPayments.round())}',
                           style: TextStyle(
                               fontSize: 24,
                               fontWeight: FontWeight.bold,
@@ -756,7 +761,7 @@ class _SalesManagementUnifiedScreenState
                           style:
                               TextStyle(fontSize: 12, color: Colors.grey[600])),
                       Text(
-                        '¥${log['totalAmount']?.toString() ?? '0'}',
+                        '¥${NumberFormat('#,###').format(log['totalAmount'] ?? 0)}',
                         style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w500,
@@ -842,8 +847,9 @@ class _SalesManagementUnifiedScreenState
     return Scaffold(
       appBar: AppBar(
         title: Text('売上管理'),
-        backgroundColor: Colors.blue[600],
+        backgroundColor: Colors.green.shade600,
         foregroundColor: Colors.white,
+        automaticallyImplyLeading: false,
         bottom: TabBar(
           controller: _tabController,
           labelColor: Colors.white,

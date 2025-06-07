@@ -1,121 +1,450 @@
-// lib/services/pdf_service.dart
+// lib/services/pdf_service.dart - フォントデバッグ強化版
+import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:flutter/foundation.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:printing/printing.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
+import 'package:flutter/services.dart';
 
-class PDFService {
-  // 月次売上請求書生成
-  static Future<void> generateMonthlySalesInvoice({
-    required String month,
-    required List<Map<String, dynamic>> salesData,
-    required Map<String, dynamic> summary,
+class PdfService {
+  static final _dateFormat = DateFormat('yyyy/MM/dd');
+  static final _currencyFormat = NumberFormat('#,###');
+
+  // フォント読み込みテスト関数
+  static Future<Map<String, dynamic>> testFontLoading() async {
+    final results = <String, dynamic>{};
+
+    // テスト1: アセットフォントの存在確認
+    try {
+      print('🔍 テスト1: アセットフォント存在確認開始');
+      final fontData =
+          await rootBundle.load('assets/fonts/NotoSansJP-Regular.ttf');
+      print('✅ アセットフォント読み込み成功: ${fontData.lengthInBytes} bytes');
+      results['assetFont'] = 'SUCCESS';
+      results['assetFontSize'] = fontData.lengthInBytes;
+    } catch (e) {
+      print('❌ アセットフォント読み込み失敗: $e');
+      results['assetFont'] = 'FAILED';
+      results['assetFontError'] = e.toString();
+    }
+
+    // テスト2: PdfGoogleFonts確認
+    try {
+      print('🔍 テスト2: PdfGoogleFonts確認開始');
+      final googleFont = await PdfGoogleFonts.notoSansJPRegular();
+      print('✅ PdfGoogleFonts成功');
+      results['googleFonts'] = 'SUCCESS';
+    } catch (e) {
+      print('❌ PdfGoogleFonts失敗: $e');
+      results['googleFonts'] = 'FAILED';
+      results['googleFontsError'] = e.toString();
+    }
+
+    // テスト3: 代替フォント確認
+    try {
+      print('🔍 テスト3: 代替フォント確認開始');
+      final altFont = await PdfGoogleFonts.nanumGothicRegular();
+      print('✅ 代替フォント成功');
+      results['altFont'] = 'SUCCESS';
+    } catch (e) {
+      print('❌ 代替フォント失敗: $e');
+      results['altFont'] = 'FAILED';
+      results['altFontError'] = e.toString();
+    }
+
+    return results;
+  }
+
+  // 請求書PDF生成（完全フォント対応版）
+  static Future<Uint8List> generateInvoice({
+    required String customerId,
+    required String customerName,
+    required List<Map<String, dynamic>> deliveries,
+    required DateTime startDate,
+    required DateTime endDate,
   }) async {
     final pdf = pw.Document();
+
+    // 合計金額計算
+    final totalAmount = deliveries.fold<int>(
+      0,
+      (sum, delivery) => sum + ((delivery['fee'] as int?) ?? 0),
+    );
+
+    // 段階的フォント読み込み戦略
+    pw.Font? jpFont;
+    pw.Font? jpBoldFont;
+    String fontStatus = '';
+
+    // フォント読み込みテスト実行
+    final fontTests = await testFontLoading();
+
+    // 戦略1: アセットフォント（最優先）
+    if (fontTests['assetFont'] == 'SUCCESS') {
+      try {
+        print('📁 戦略1: アセットフォント使用開始');
+        final fontData =
+            await rootBundle.load('assets/fonts/NotoSansJP-Regular.ttf');
+        jpFont = pw.Font.ttf(fontData);
+
+        final boldFontData =
+            await rootBundle.load('assets/fonts/NotoSansJP-Bold.ttf');
+        jpBoldFont = pw.Font.ttf(boldFontData);
+
+        fontStatus = 'アセットフォント成功';
+        print('✅ アセットフォント適用完了');
+      } catch (e) {
+        print('❌ アセットフォント変換失敗: $e');
+        jpFont = null;
+        jpBoldFont = null;
+      }
+    }
+
+    // 戦略2: PdfGoogleFonts（フォールバック）
+    if (jpFont == null && fontTests['googleFonts'] == 'SUCCESS') {
+      try {
+        print('🌐 戦略2: PdfGoogleFonts使用開始');
+        jpFont = await PdfGoogleFonts.notoSansJPRegular();
+        jpBoldFont = await PdfGoogleFonts.notoSansJPBold();
+        fontStatus = 'PdfGoogleFonts成功';
+        print('✅ PdfGoogleFonts適用完了');
+      } catch (e) {
+        print('❌ PdfGoogleFonts変換失敗: $e');
+        jpFont = null;
+        jpBoldFont = null;
+      }
+    }
+
+    // 戦略3: 代替フォント（最終手段）
+    if (jpFont == null && fontTests['altFont'] == 'SUCCESS') {
+      try {
+        print('🔄 戦略3: 代替フォント使用開始');
+        jpFont = await PdfGoogleFonts.nanumGothicRegular();
+        jpBoldFont = jpFont; // 同じフォントを使用
+        fontStatus = '代替フォント成功';
+        print('✅ 代替フォント適用完了');
+      } catch (e) {
+        print('❌ 代替フォント変換失敗: $e');
+        jpFont = null;
+        jpBoldFont = null;
+      }
+    }
+
+    // 戦略4: フォントなし（英語のみ）
+    if (jpFont == null) {
+      fontStatus = '全フォント失敗 - 英語のみ';
+      print('⚠️ 全フォント読み込み失敗 - 英語のみで継続');
+    }
 
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: pw.EdgeInsets.all(32),
+        margin: const pw.EdgeInsets.all(40),
+        theme: jpFont != null
+            ? pw.ThemeData.withFont(
+                base: jpFont,
+                bold: jpBoldFont ?? jpFont,
+                italic: jpFont,
+                boldItalic: jpBoldFont ?? jpFont,
+              )
+            : pw.ThemeData(),
         build: (pw.Context context) {
           return [
-            _buildInvoiceHeader(),
+            // 詳細デバッグ情報ボックス
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(15),
+              decoration: pw.BoxDecoration(
+                color: jpFont != null ? PdfColors.green50 : PdfColors.red50,
+                border: pw.Border.all(
+                    color:
+                        jpFont != null ? PdfColors.green300 : PdfColors.red300,
+                    width: 2),
+                borderRadius: pw.BorderRadius.circular(8),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    jpFont != null ? '🎉 日本語フォント読み込み成功！' : '⚠️ 日本語フォント読み込み失敗',
+                    style: pw.TextStyle(
+                      fontSize: 14,
+                      fontWeight: pw.FontWeight.bold,
+                      color: jpFont != null
+                          ? PdfColors.green700
+                          : PdfColors.red700,
+                    ),
+                  ),
+                  pw.SizedBox(height: 8),
+                  pw.Text(
+                    'フォント状態: $fontStatus',
+                    style: pw.TextStyle(fontSize: 12, color: PdfColors.black),
+                  ),
+                  pw.SizedBox(height: 5),
+                  pw.Text(
+                    'アセット: ${fontTests['assetFont']} | GoogleFonts: ${fontTests['googleFonts']} | 代替: ${fontTests['altFont']}',
+                    style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600),
+                  ),
+                ],
+              ),
+            ),
             pw.SizedBox(height: 20),
-            _buildCompanyInfo(),
+
+            // 日本語テスト（フォントが使用可能な場合のみ）
+            if (jpFont != null) ...[
+              pw.Container(
+                width: double.infinity,
+                padding: const pw.EdgeInsets.all(15),
+                decoration: pw.BoxDecoration(
+                  color: PdfColors.blue50,
+                  border: pw.Border.all(color: PdfColors.blue200, width: 2),
+                  borderRadius: pw.BorderRadius.circular(8),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(
+                      '🇯🇵 日本語表示テスト',
+                      style: pw.TextStyle(
+                        fontSize: 14,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.blue800,
+                      ),
+                    ),
+                    pw.SizedBox(height: 10),
+                    pw.Text(
+                      'ひらがな: あいうえお かきくけこ',
+                      style: pw.TextStyle(
+                          fontSize: 14, font: jpFont, color: PdfColors.black),
+                    ),
+                    pw.Text(
+                      'カタカナ: アイウエオ カキクケコ',
+                      style: pw.TextStyle(
+                          fontSize: 14, font: jpFont, color: PdfColors.black),
+                    ),
+                    pw.Text(
+                      '漢字: 株式会社 請求書 配送 管理',
+                      style: pw.TextStyle(
+                          fontSize: 14, font: jpFont, color: PdfColors.black),
+                    ),
+                    pw.Text(
+                      '顧客名テスト: 山田商事 佐藤商事 田中物流',
+                      style: pw.TextStyle(
+                          fontSize: 14, font: jpFont, color: PdfColors.black),
+                    ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 30),
+            ],
+
+            // 実際の請求書内容（日本語フォント対応）
+            _buildInvoiceHeader(jpFont, jpBoldFont),
             pw.SizedBox(height: 30),
-            _buildInvoiceTitle('月次売上請求書', month),
+            _buildInvoiceInfo(customerName, startDate, endDate, jpFont),
+            pw.SizedBox(height: 30),
+            _buildInvoiceTable(deliveries, jpFont),
             pw.SizedBox(height: 20),
-            _buildSalesSummary(summary),
+            _buildInvoiceSummary(totalAmount, jpFont, jpBoldFont),
             pw.SizedBox(height: 30),
-            _buildSalesTable(salesData),
-            pw.SizedBox(height: 30),
-            _buildInvoiceFooter(),
+            _buildInvoiceFooter(jpFont),
           ];
         },
       ),
     );
 
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-    );
+    return pdf.save();
   }
 
-  // 配送明細書生成
-  static Future<void> generateDeliveryInvoice({
-    required Map<String, dynamic> deliveryData,
-    required Map<String, dynamic> driverData,
+  // 支払通知書PDF生成（同様にフォント対応）
+  static Future<Uint8List> generatePaymentNotice({
+    required String driverId,
+    required String driverName,
+    required List<Map<String, dynamic>> workReports,
+    required DateTime startDate,
+    required DateTime endDate,
   }) async {
     final pdf = pw.Document();
+
+    // 合計支払額計算
+    final totalPayment = workReports.fold<int>(
+      0,
+      (sum, report) => sum + ((report['totalAmount'] as int?) ?? 0),
+    );
+
+    // フォント読み込み（請求書と同じ戦略）
+    pw.Font? jpFont;
+    pw.Font? jpBoldFont;
+
+    try {
+      final fontData =
+          await rootBundle.load('assets/fonts/NotoSansJP-Regular.ttf');
+      jpFont = pw.Font.ttf(fontData);
+
+      final boldFontData =
+          await rootBundle.load('assets/fonts/NotoSansJP-Bold.ttf');
+      jpBoldFont = pw.Font.ttf(boldFontData);
+    } catch (e1) {
+      try {
+        jpFont = await PdfGoogleFonts.notoSansJPRegular();
+        jpBoldFont = await PdfGoogleFonts.notoSansJPBold();
+      } catch (e2) {
+        try {
+          jpFont = await PdfGoogleFonts.nanumGothicRegular();
+          jpBoldFont = jpFont;
+        } catch (e3) {
+          print('支払通知書: 全フォント読み込み失敗');
+        }
+      }
+    }
 
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
-        margin: pw.EdgeInsets.all(32),
+        margin: const pw.EdgeInsets.all(40),
+        theme: jpFont != null
+            ? pw.ThemeData.withFont(
+                base: jpFont,
+                bold: jpBoldFont ?? jpFont,
+              )
+            : pw.ThemeData(),
         build: (pw.Context context) {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              _buildInvoiceHeader(),
-              pw.SizedBox(height: 20),
-              _buildCompanyInfo(),
+              // ヘッダー（日本語対応）
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(
+                        '支払通知書',
+                        style: pw.TextStyle(
+                          fontSize: 28,
+                          fontWeight: pw.FontWeight.bold,
+                          font: jpBoldFont ?? jpFont,
+                          color: PdfColors.green700,
+                        ),
+                      ),
+                      pw.SizedBox(height: 8),
+                      pw.Text(
+                        'PAYMENT NOTICE',
+                        style: pw.TextStyle(
+                          fontSize: 14,
+                          color: PdfColors.grey600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.end,
+                    children: [
+                      pw.Text(
+                        '株式会社ダブルエッチ',
+                        style: pw.TextStyle(
+                          fontSize: 16,
+                          fontWeight: pw.FontWeight.bold,
+                          font: jpBoldFont ?? jpFont,
+                        ),
+                      ),
+                      pw.SizedBox(height: 4),
+                      pw.Text(
+                        'TEL: 000-0000-0000',
+                        style: pw.TextStyle(fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
               pw.SizedBox(height: 30),
-              _buildDeliveryTitle(),
-              pw.SizedBox(height: 20),
-              _buildDeliveryDetails(deliveryData, driverData),
+
+              // 基本情報（日本語対応）
+              pw.Container(
+                padding: const pw.EdgeInsets.all(20),
+                decoration: pw.BoxDecoration(
+                  color: PdfColors.green50,
+                  borderRadius: pw.BorderRadius.circular(8),
+                  border: pw.Border.all(color: PdfColors.green200),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(
+                      '支払対象者: $driverName',
+                      style: pw.TextStyle(
+                        fontSize: 16,
+                        fontWeight: pw.FontWeight.bold,
+                        font: jpBoldFont ?? jpFont,
+                      ),
+                    ),
+                    pw.SizedBox(height: 10),
+                    pw.Text(
+                      '対象期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}',
+                      style: pw.TextStyle(fontSize: 14, font: jpFont),
+                    ),
+                    pw.SizedBox(height: 5),
+                    pw.Text(
+                      '発行日: ${_dateFormat.format(DateTime.now())}',
+                      style: pw.TextStyle(fontSize: 14, font: jpFont),
+                    ),
+                  ],
+                ),
+              ),
               pw.SizedBox(height: 30),
-              _buildDeliveryMap(),
+
+              // 稼働明細
+              pw.Text(
+                '稼働明細',
+                style: pw.TextStyle(
+                  fontSize: 18,
+                  fontWeight: pw.FontWeight.bold,
+                  font: jpBoldFont ?? jpFont,
+                ),
+              ),
+              pw.SizedBox(height: 15),
+
+              // 稼働データ表
+              _buildPaymentNoticeTable(workReports, jpFont),
               pw.Spacer(),
-              _buildInvoiceFooter(),
+
+              // 総支払額
+              pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Container(
+                  width: 250,
+                  padding: const pw.EdgeInsets.all(20),
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.green50,
+                    border: pw.Border.all(color: PdfColors.green200),
+                    borderRadius: pw.BorderRadius.circular(8),
+                  ),
+                  child: pw.Text(
+                    '総支払額: ¥${_currencyFormat.format(totalPayment)}',
+                    style: pw.TextStyle(
+                      fontSize: 18,
+                      fontWeight: pw.FontWeight.bold,
+                      font: jpBoldFont ?? jpFont,
+                      color: PdfColors.green700,
+                    ),
+                    textAlign: pw.TextAlign.center,
+                  ),
+                ),
+              ),
             ],
           );
         },
       ),
     );
 
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-    );
+    return pdf.save();
   }
 
-  // ドライバー別売上明細書
-  static Future<void> generateDriverSalesReport({
-    required String month,
-    required Map<String, dynamic> driverInfo,
-    required List<Map<String, dynamic>> salesData,
-    required Map<String, dynamic> summary,
-  }) async {
-    final pdf = pw.Document();
+  // ===== コンポーネント（日本語フォント対応版） =====
 
-    pdf.addPage(
-      pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        margin: pw.EdgeInsets.all(32),
-        build: (pw.Context context) {
-          return [
-            _buildInvoiceHeader(),
-            pw.SizedBox(height: 20),
-            _buildDriverInfo(driverInfo),
-            pw.SizedBox(height: 30),
-            _buildInvoiceTitle('ドライバー売上明細書', month),
-            pw.SizedBox(height: 20),
-            _buildDriverSummary(summary),
-            pw.SizedBox(height: 20),
-            _buildDriverSalesTable(salesData),
-            pw.SizedBox(height: 30),
-            _buildPaymentInfo(summary),
-          ];
-        },
-      ),
-    );
-
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-    );
-  }
-
-  // ヘッダー部分
-  static pw.Widget _buildInvoiceHeader() {
+  static pw.Widget _buildInvoiceHeader(pw.Font? jpFont, pw.Font? jpBoldFont) {
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
@@ -123,42 +452,57 @@ class PDFService {
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
             pw.Text(
-              '軽貨物業務管理システム',
+              '請求書',
               style: pw.TextStyle(
-                fontSize: 24,
+                fontSize: 28,
                 fontWeight: pw.FontWeight.bold,
+                font: jpBoldFont ?? jpFont,
                 color: PdfColors.blue800,
               ),
             ),
-            pw.SizedBox(height: 5),
+            pw.SizedBox(height: 8),
             pw.Text(
-              'Cargo Management System',
-              style: pw.TextStyle(fontSize: 12, color: PdfColors.grey600),
+              'INVOICE',
+              style: pw.TextStyle(
+                fontSize: 14,
+                color: PdfColors.grey600,
+              ),
             ),
           ],
         ),
-        pw.Container(
-          width: 80,
-          height: 80,
-          decoration: pw.BoxDecoration(
-            color: PdfColors.blue100,
-            borderRadius: pw.BorderRadius.circular(40),
-          ),
-          child: pw.Center(
-            child: pw.Text(
-              '🚛',
-              style: pw.TextStyle(fontSize: 40),
+        pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.end,
+          children: [
+            pw.Text(
+              '株式会社ダブルエッチ',
+              style: pw.TextStyle(
+                fontSize: 16,
+                fontWeight: pw.FontWeight.bold,
+                font: jpBoldFont ?? jpFont,
+              ),
             ),
-          ),
+            pw.SizedBox(height: 4),
+            pw.Text(
+              '〒000-0000 東京都○○区○○',
+              style: pw.TextStyle(fontSize: 10, font: jpFont),
+            ),
+            pw.Text(
+              'TEL: 000-0000-0000',
+              style: pw.TextStyle(fontSize: 10),
+            ),
+          ],
         ),
       ],
     );
   }
 
-  // 会社情報
-  static pw.Widget _buildCompanyInfo() {
+  static pw.Widget _buildInvoiceInfo(String customerName, DateTime startDate,
+      DateTime endDate, pw.Font? jpFont) {
+    final invoiceNumber =
+        'INV-${DateTime.now().year}${DateTime.now().month.toString().padLeft(2, '0')}${DateTime.now().day.toString().padLeft(2, '0')}-${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}';
+
     return pw.Container(
-      padding: pw.EdgeInsets.all(16),
+      padding: const pw.EdgeInsets.all(20),
       decoration: pw.BoxDecoration(
         color: PdfColors.grey100,
         borderRadius: pw.BorderRadius.circular(8),
@@ -166,390 +510,318 @@ class PDFService {
       child: pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          pw.Text(
-            '株式会社ダブルエッチ',
-            style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    '請求先',
+                    style: pw.TextStyle(
+                      fontSize: 12,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.grey600,
+                      font: jpFont,
+                    ),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    customerName,
+                    style: pw.TextStyle(
+                      fontSize: 16,
+                      fontWeight: pw.FontWeight.bold,
+                      font: jpFont,
+                    ),
+                  ),
+                ],
+              ),
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Text(
+                    '請求書番号',
+                    style: pw.TextStyle(
+                      fontSize: 12,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.grey600,
+                      font: jpFont,
+                    ),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    invoiceNumber,
+                    style: pw.TextStyle(fontSize: 14),
+                  ),
+                ],
+              ),
+            ],
           ),
-          pw.SizedBox(height: 8),
-          pw.Text('〒000-0000 東京都○○区○○ 1-2-3'),
-          pw.Text('TEL: 03-1234-5678'),
-          pw.Text('Email: info@doubletech.co.jp'),
+          pw.SizedBox(height: 16),
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    '請求期間',
+                    style: pw.TextStyle(
+                      fontSize: 12,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.grey600,
+                      font: jpFont,
+                    ),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    '${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}',
+                    style: pw.TextStyle(fontSize: 14, font: jpFont),
+                  ),
+                ],
+              ),
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Text(
+                    '発行日',
+                    style: pw.TextStyle(
+                      fontSize: 12,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.grey600,
+                      font: jpFont,
+                    ),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    _dateFormat.format(DateTime.now()),
+                    style: pw.TextStyle(fontSize: 14, font: jpFont),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  // 請求書タイトル
-  static pw.Widget _buildInvoiceTitle(String title, String month) {
-    final monthNames = {
-      '01': '1月',
-      '02': '2月',
-      '03': '3月',
-      '04': '4月',
-      '05': '5月',
-      '06': '6月',
-      '07': '7月',
-      '08': '8月',
-      '09': '9月',
-      '10': '10月',
-      '11': '11月',
-      '12': '12月'
-    };
+  static pw.Widget _buildInvoiceTable(
+      List<Map<String, dynamic>> deliveries, pw.Font? jpFont) {
+    return pw.Table(
+      border: pw.TableBorder.all(color: PdfColors.grey300),
+      columnWidths: {
+        0: const pw.FixedColumnWidth(60),
+        1: const pw.FlexColumnWidth(3),
+        2: const pw.FlexColumnWidth(2),
+        3: const pw.FixedColumnWidth(80),
+        4: const pw.FixedColumnWidth(100),
+      },
+      children: [
+        // ヘッダー
+        pw.TableRow(
+          decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+          children: [
+            _buildTableCell('No.', jpFont, isHeader: true),
+            _buildTableCell('案件名', jpFont, isHeader: true),
+            _buildTableCell('配送区間', jpFont, isHeader: true),
+            _buildTableCell('単価', jpFont, isHeader: true),
+            _buildTableCell('金額', jpFont, isHeader: true),
+          ],
+        ),
+        // データ行
+        ...deliveries.asMap().entries.map((entry) {
+          final index = entry.key;
+          final delivery = entry.value;
+          return pw.TableRow(
+            children: [
+              _buildTableCell('${index + 1}', jpFont),
+              _buildTableCell(delivery['projectName'] ?? '', jpFont),
+              _buildTableCell(
+                  '${delivery['pickupLocation'] ?? ''} → ${delivery['deliveryLocation'] ?? ''}',
+                  jpFont),
+              _buildTableCell(
+                  '¥${_currencyFormat.format(delivery['unitPrice'] ?? 0)}',
+                  jpFont),
+              _buildTableCell(
+                  '¥${_currencyFormat.format(delivery['fee'] ?? 0)}', jpFont),
+            ],
+          );
+        }).toList(),
+      ],
+    );
+  }
 
-    final parts = month.split('-');
-    final year = parts[0];
-    final monthNum = parts[1];
-    final monthName = monthNames[monthNum] ?? monthNum;
+  static pw.Widget _buildInvoiceSummary(
+      int totalAmount, pw.Font? jpFont, pw.Font? jpBoldFont) {
+    return pw.Align(
+      alignment: pw.Alignment.centerRight,
+      child: pw.Container(
+        width: 250,
+        padding: const pw.EdgeInsets.all(20),
+        decoration: pw.BoxDecoration(
+          color: PdfColors.blue50,
+          borderRadius: pw.BorderRadius.circular(8),
+          border: pw.Border.all(color: PdfColors.blue200),
+        ),
+        child: pw.Column(
+          children: [
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(
+                  '小計',
+                  style: pw.TextStyle(fontSize: 14, font: jpFont),
+                ),
+                pw.Text(
+                  '¥${_currencyFormat.format(totalAmount)}',
+                  style: pw.TextStyle(fontSize: 14),
+                ),
+              ],
+            ),
+            pw.SizedBox(height: 8),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(
+                  '消費税 (10%)',
+                  style: pw.TextStyle(fontSize: 14, font: jpFont),
+                ),
+                pw.Text(
+                  '¥${_currencyFormat.format((totalAmount * 0.1).round())}',
+                  style: pw.TextStyle(fontSize: 14),
+                ),
+              ],
+            ),
+            pw.Divider(color: PdfColors.blue300),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(
+                  '合計金額',
+                  style: pw.TextStyle(
+                    fontSize: 16,
+                    fontWeight: pw.FontWeight.bold,
+                    font: jpBoldFont ?? jpFont,
+                  ),
+                ),
+                pw.Text(
+                  '¥${_currencyFormat.format((totalAmount * 1.1).round())}',
+                  style: pw.TextStyle(
+                    fontSize: 16,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.blue700,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
+  static pw.Widget _buildInvoiceFooter(pw.Font? jpFont) {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
         pw.Text(
-          title,
-          style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+          'お支払い条件',
+          style: pw.TextStyle(
+            fontSize: 14,
+            fontWeight: pw.FontWeight.bold,
+            font: jpFont,
+          ),
         ),
         pw.SizedBox(height: 8),
         pw.Text(
-          '対象期間: ${year}年${monthName}',
-          style: pw.TextStyle(fontSize: 14, color: PdfColors.grey700),
-        ),
-        pw.Text(
-          '作成日: ${DateTime.now().year}年${DateTime.now().month}月${DateTime.now().day}日',
-          style: pw.TextStyle(fontSize: 12, color: PdfColors.grey600),
+          '• 請求書発行日より30日以内にお支払いください\n• 振込手数料はお客様負担となります\n• ご不明な点がございましたらお気軽にお問い合わせください',
+          style: pw.TextStyle(fontSize: 10, font: jpFont),
         ),
       ],
     );
   }
 
-  // 売上サマリー
-  static pw.Widget _buildSalesSummary(Map<String, dynamic> summary) {
-    return pw.Container(
-      padding: pw.EdgeInsets.all(16),
-      decoration: pw.BoxDecoration(
-        color: PdfColors.blue50,
-        borderRadius: pw.BorderRadius.circular(8),
-        border: pw.Border.all(color: PdfColors.blue200),
-      ),
-      child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
-        children: [
-          _buildSummaryItem(
-              '総売上', '¥${(summary['totalSales'] ?? 0).toStringAsFixed(0)}'),
-          _buildSummaryItem('配送件数', '${summary['totalTransactions'] ?? 0}件'),
-          _buildSummaryItem('手数料総額',
-              '¥${(summary['totalCommission'] ?? 0).toStringAsFixed(0)}'),
-        ],
-      ),
-    );
-  }
-
-  static pw.Widget _buildSummaryItem(String label, String value) {
-    return pw.Column(
-      children: [
-        pw.Text(label,
-            style: pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
-        pw.SizedBox(height: 4),
-        pw.Text(
-          value,
-          style: pw.TextStyle(
-              fontSize: 16,
-              fontWeight: pw.FontWeight.bold,
-              color: PdfColors.blue800),
-        ),
-      ],
-    );
-  }
-
-  // 売上テーブル
-  static pw.Widget _buildSalesTable(List<Map<String, dynamic>> salesData) {
+  static pw.Widget _buildPaymentNoticeTable(
+      List<Map<String, dynamic>> workReports, pw.Font? jpFont) {
     return pw.Table(
       border: pw.TableBorder.all(color: PdfColors.grey300),
-      columnWidths: {
-        0: pw.FlexColumnWidth(2),
-        1: pw.FlexColumnWidth(2),
-        2: pw.FlexColumnWidth(1.5),
-        3: pw.FlexColumnWidth(1.5),
-        4: pw.FlexColumnWidth(1.5),
-      },
       children: [
         // ヘッダー
         pw.TableRow(
-          decoration: pw.BoxDecoration(color: PdfColors.grey200),
+          decoration: const pw.BoxDecoration(color: PdfColors.grey200),
           children: [
-            _buildTableHeader('配送案件ID'),
-            _buildTableHeader('ドライバー'),
-            _buildTableHeader('売上金額'),
-            _buildTableHeader('手数料'),
-            _buildTableHeader('純利益'),
+            _buildTableCell('作業日', jpFont, isHeader: true),
+            _buildTableCell('案件名', jpFont, isHeader: true),
+            _buildTableCell('稼働時間', jpFont, isHeader: true),
+            _buildTableCell('支払額', jpFont, isHeader: true),
           ],
         ),
         // データ行
-        ...salesData.map((sale) => pw.TableRow(
-              children: [
-                _buildTableCell(
-                    sale['deliveryId']?.toString().substring(0, 8) ?? '未設定'),
-                _buildTableCell(sale['driverName'] ?? '未設定'),
-                _buildTableCell('¥${(sale['amount'] ?? 0).toStringAsFixed(0)}'),
-                _buildTableCell(
-                    '¥${(sale['commission'] ?? 0).toStringAsFixed(0)}'),
-                _buildTableCell(
-                    '¥${(sale['netAmount'] ?? 0).toStringAsFixed(0)}'),
-              ],
-            )),
+        ...workReports.map((report) {
+          final workDate = (report['workDate'] as Timestamp?)?.toDate();
+          final workStart = (report['workStartTime'] as Timestamp?)?.toDate();
+          final workEnd = (report['workEndTime'] as Timestamp?)?.toDate();
+
+          String workHours = '---';
+          if (workStart != null && workEnd != null) {
+            final duration = workEnd.difference(workStart);
+            final hours = duration.inMinutes / 60;
+            workHours = '${hours.toStringAsFixed(1)}h';
+          }
+
+          return pw.TableRow(
+            children: [
+              _buildTableCell(
+                  workDate != null ? _dateFormat.format(workDate) : '', jpFont),
+              _buildTableCell(report['selectedDelivery'] ?? '', jpFont),
+              _buildTableCell(workHours, jpFont),
+              _buildTableCell(
+                  '¥${_currencyFormat.format(report['totalAmount'] ?? 0)}',
+                  jpFont),
+            ],
+          );
+        }).toList(),
       ],
     );
   }
 
-  static pw.Widget _buildTableHeader(String text) {
+  static pw.Widget _buildTableCell(String text, pw.Font? jpFont,
+      {bool isHeader = false}) {
     return pw.Container(
-      padding: pw.EdgeInsets.all(8),
+      padding: const pw.EdgeInsets.all(8),
       child: pw.Text(
         text,
-        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
-        textAlign: pw.TextAlign.center,
-      ),
-    );
-  }
-
-  static pw.Widget _buildTableCell(String text) {
-    return pw.Container(
-      padding: pw.EdgeInsets.all(8),
-      child: pw.Text(
-        text,
-        style: pw.TextStyle(fontSize: 9),
-        textAlign: pw.TextAlign.center,
-      ),
-    );
-  }
-
-  // 配送詳細
-  static pw.Widget _buildDeliveryDetails(
-      Map<String, dynamic> delivery, Map<String, dynamic> driver) {
-    return pw.Container(
-      padding: pw.EdgeInsets.all(16),
-      decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.grey300),
-        borderRadius: pw.BorderRadius.circular(8),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          _buildDetailRow('案件名', delivery['title'] ?? '未設定'),
-          _buildDetailRow('クライアント', delivery['client'] ?? '未設定'),
-          _buildDetailRow('ドライバー', driver['name'] ?? '未設定'),
-          _buildDetailRow('車両',
-              '${driver['vehicleType'] ?? '未設定'} (${driver['vehicleNumber'] ?? '未設定'})'),
-          pw.SizedBox(height: 10),
-          _buildDetailRow(
-              '集荷先', delivery['pickupLocation']?['address'] ?? '未設定'),
-          _buildDetailRow(
-              '配送先', delivery['deliveryLocation']?['address'] ?? '未設定'),
-          pw.SizedBox(height: 10),
-          _buildDetailRow(
-              '配送料金', '¥${(delivery['price'] ?? 0).toStringAsFixed(0)}'),
-          _buildDetailRow('重量', delivery['weight'] ?? '未設定'),
-          if (delivery['notes']?.isNotEmpty ?? false)
-            _buildDetailRow('備考', delivery['notes']),
-        ],
-      ),
-    );
-  }
-
-  static pw.Widget _buildDetailRow(String label, String value) {
-    return pw.Padding(
-      padding: pw.EdgeInsets.symmetric(vertical: 2),
-      child: pw.Row(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.SizedBox(
-            width: 100,
-            child: pw.Text(
-              '$label:',
-              style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 11),
-            ),
-          ),
-          pw.Expanded(
-            child: pw.Text(value, style: pw.TextStyle(fontSize: 11)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ドライバー情報
-  static pw.Widget _buildDriverInfo(Map<String, dynamic> driver) {
-    return pw.Container(
-      padding: pw.EdgeInsets.all(16),
-      decoration: pw.BoxDecoration(
-        color: PdfColors.orange50,
-        borderRadius: pw.BorderRadius.circular(8),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text(
-            'ドライバー情報',
-            style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
-          ),
-          pw.SizedBox(height: 8),
-          _buildDetailRow('氏名', driver['name'] ?? '未設定'),
-          _buildDetailRow('電話番号', driver['phone'] ?? '未設定'),
-          _buildDetailRow('車両',
-              '${driver['vehicleType'] ?? '未設定'} (${driver['vehicleNumber'] ?? '未設定'})'),
-        ],
-      ),
-    );
-  }
-
-  // ドライバー売上テーブル
-  static pw.Widget _buildDriverSalesTable(
-      List<Map<String, dynamic>> salesData) {
-    return pw.Table(
-      border: pw.TableBorder.all(color: PdfColors.grey300),
-      columnWidths: {
-        0: pw.FlexColumnWidth(2),
-        1: pw.FlexColumnWidth(2),
-        2: pw.FlexColumnWidth(1.5),
-        3: pw.FlexColumnWidth(1.5),
-      },
-      children: [
-        // ヘッダー
-        pw.TableRow(
-          decoration: pw.BoxDecoration(color: PdfColors.orange100),
-          children: [
-            _buildTableHeader('配送日'),
-            _buildTableHeader('案件名'),
-            _buildTableHeader('売上金額'),
-            _buildTableHeader('純利益'),
-          ],
+        style: pw.TextStyle(
+          fontSize: isHeader ? 12 : 10,
+          fontWeight: isHeader ? pw.FontWeight.bold : pw.FontWeight.normal,
+          font: jpFont,
         ),
-        // データ行
-        ...salesData.map((sale) => pw.TableRow(
-              children: [
-                _buildTableCell(_formatDate(sale['createdAt'])),
-                _buildTableCell(sale['deliveryTitle'] ?? '未設定'),
-                _buildTableCell('¥${(sale['amount'] ?? 0).toStringAsFixed(0)}'),
-                _buildTableCell(
-                    '¥${(sale['netAmount'] ?? 0).toStringAsFixed(0)}'),
-              ],
-            )),
-      ],
-    );
-  }
-
-  // ドライバーサマリー
-  static pw.Widget _buildDriverSummary(Map<String, dynamic> summary) {
-    return pw.Container(
-      padding: pw.EdgeInsets.all(16),
-      decoration: pw.BoxDecoration(
-        color: PdfColors.orange50,
-        borderRadius: pw.BorderRadius.circular(8),
-        border: pw.Border.all(color: PdfColors.orange200),
-      ),
-      child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
-        children: [
-          _buildSummaryItem('総配送数', '${summary['totalDeliveries'] ?? 0}件'),
-          _buildSummaryItem(
-              '総売上', '¥${(summary['totalSales'] ?? 0).toStringAsFixed(0)}'),
-          _buildSummaryItem(
-              '純利益', '¥${(summary['netAmount'] ?? 0).toStringAsFixed(0)}'),
-        ],
+        textAlign: isHeader ? pw.TextAlign.center : pw.TextAlign.left,
       ),
     );
   }
 
-  // 支払い情報
-  static pw.Widget _buildPaymentInfo(Map<String, dynamic> summary) {
-    return pw.Container(
-      padding: pw.EdgeInsets.all(16),
-      decoration: pw.BoxDecoration(
-        color: PdfColors.green50,
-        borderRadius: pw.BorderRadius.circular(8),
-        border: pw.Border.all(color: PdfColors.green200),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text(
-            '支払い情報',
-            style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
-          ),
-          pw.SizedBox(height: 8),
-          pw.Text('支払予定額: ¥${(summary['netAmount'] ?? 0).toStringAsFixed(0)}'),
-          pw.Text(
-              '支払予定日: ${DateTime.now().add(Duration(days: 30)).year}年${DateTime.now().add(Duration(days: 30)).month}月${DateTime.now().add(Duration(days: 30)).day}日'),
-          pw.Text('振込先: ○○銀行 ○○支店 普通 1234567'),
-        ],
-      ),
+  // ===== PDF表示・印刷・ダウンロード機能 =====
+
+  static Future<void> printPdf(Uint8List pdfBytes, String title) async {
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdfBytes,
+      name: title,
     );
   }
 
-  // 配送マップ（プレースホルダー）
-  static pw.Widget _buildDeliveryMap() {
-    return pw.Container(
-      height: 150,
-      decoration: pw.BoxDecoration(
-        color: PdfColors.grey100,
-        borderRadius: pw.BorderRadius.circular(8),
-        border: pw.Border.all(color: PdfColors.grey300),
-      ),
-      child: pw.Center(
-        child: pw.Column(
-          mainAxisAlignment: pw.MainAxisAlignment.center,
-          children: [
-            pw.Text('🗺️', style: pw.TextStyle(fontSize: 40)),
-            pw.Text('配送ルートマップ', style: pw.TextStyle(color: PdfColors.grey600)),
-          ],
-        ),
-      ),
+  static Future<void> downloadPdf(Uint8List pdfBytes, String filename) async {
+    await Printing.sharePdf(
+      bytes: pdfBytes,
+      filename: filename,
     );
   }
 
-  // 配送タイトル
-  static pw.Widget _buildDeliveryTitle() {
-    return pw.Text(
-      '配送完了明細書',
-      style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+  static Future<void> previewPdf(Uint8List pdfBytes, String title) async {
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdfBytes,
+      name: title,
     );
-  }
-
-  // フッター
-  static pw.Widget _buildInvoiceFooter() {
-    return pw.Container(
-      padding: pw.EdgeInsets.all(16),
-      decoration: pw.BoxDecoration(
-        color: PdfColors.grey100,
-        borderRadius: pw.BorderRadius.circular(8),
-      ),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.center,
-        children: [
-          pw.Text(
-            'この明細書に関するお問い合わせ',
-            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-          ),
-          pw.SizedBox(height: 4),
-          pw.Text('株式会社ダブルエッチ 業務管理部'),
-          pw.Text('TEL: 03-1234-5678 Email: billing@doubletech.co.jp'),
-        ],
-      ),
-    );
-  }
-
-  // 日付フォーマット
-  static String _formatDate(dynamic timestamp) {
-    if (timestamp == null) return '未設定';
-
-    DateTime date;
-    if (timestamp is Timestamp) {
-      date = timestamp.toDate();
-    } else if (timestamp is DateTime) {
-      date = timestamp;
-    } else {
-      return '未設定';
-    }
-
-    return '${date.month}/${date.day}';
   }
 }
