@@ -1,7 +1,8 @@
 {
+  "buildCommand": "flutter build web",
   "outputDirectory": "build/web",
-  "buildCommand": "echo 'Using pre-built Flutter web assets'",
-  "installCommand": "echo 'No install required'",
+  "installCommand": "echo 'Flutter project - no npm install needed'",
+  "framework": null,
   "rewrites": [
     {
       "source": "/(.*)",
