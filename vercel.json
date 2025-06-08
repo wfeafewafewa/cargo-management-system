@@ -1,7 +1,7 @@
 {
+  "buildCommand": "flutter build web --release",
   "outputDirectory": "build/web",
-  "buildCommand": "echo 'Using pre-built Flutter web assets'",
-  "installCommand": "echo 'No install required'",
+  "installCommand": "curl -fsSL https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.24.5-stable.tar.xz | tar -xJ && export PATH=\"$PATH:$PWD/flutter/bin\" && flutter doctor && flutter pub get",
   "rewrites": [
     {
       "source": "/(.*)",
