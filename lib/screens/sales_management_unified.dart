@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'dart:typed_data'; // Uint8List用
 import '../services/pdf_service.dart'; // PDF Serviceをインポート
+import '../debug/pdf_debug_test.dart';
 
 class SalesManagementUnifiedScreen extends StatefulWidget {
   @override
@@ -408,7 +409,75 @@ class _SalesManagementUnifiedScreenState
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             SizedBox(height: 16),
 
-            // 請求書生成セクション
+            // 🔍 診断ボタンを最初に追加
+            Container(
+              margin: EdgeInsets.only(bottom: 16),
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade300),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.bug_report, color: Colors.orange.shade700),
+                      SizedBox(width: 8),
+                      Text(
+                        '🔍 PDF診断テスト（一時的）',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'エラー原因を特定するための診断テストです',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                  SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        print('🔍 PDF診断開始...');
+                        try {
+                          await PdfDebugTest.runDiagnostics();
+                          await PdfDebugTest.stepByStepTest();
+
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('診断完了！コンソールログを確認してください'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        } catch (e) {
+                          print('❌ 診断エラー: $e');
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('診断エラー: $e'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      },
+                      icon: Icon(Icons.bug_report),
+                      label: Text('PDF診断実行'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // 既存の請求書生成セクション
             Container(
               margin: EdgeInsets.only(bottom: 16),
               padding: EdgeInsets.all(16),
@@ -455,7 +524,7 @@ class _SalesManagementUnifiedScreenState
               ),
             ),
 
-            // 支払通知書生成セクション
+            // 支払通知書生成セクション（既存のまま）
             Container(
               padding: EdgeInsets.all(16),
               decoration: BoxDecoration(
