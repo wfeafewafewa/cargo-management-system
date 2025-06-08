@@ -1,3 +1,9 @@
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
+import 'dart:typed_data';
+import '../services/pdf_service.dart';
+import '../debug/pdf_debug_test.dart'; // 診断テスト用
 import 'package:flutter/foundation.dart';
 import 'dart:html' as html;
 
@@ -43,10 +49,7 @@ class _SalesManagementUnifiedScreenState
     setState(() => _isLoading = true);
 
     try {
-      // 顧客とドライバーのリストを取得
       await _loadCustomersAndDrivers();
-
-      // 全データを取得（初期表示用）
       await _loadData();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -58,7 +61,6 @@ class _SalesManagementUnifiedScreenState
   }
 
   Future<void> _loadCustomersAndDrivers() async {
-    // 顧客リスト取得
     final deliveriesSnapshot = await _firestore.collection('deliveries').get();
     final customers = deliveriesSnapshot.docs
         .map((doc) => doc.data()['customerName'] as String?)
@@ -66,7 +68,6 @@ class _SalesManagementUnifiedScreenState
         .toSet()
         .toList();
 
-    // ドライバーリスト取得
     final driversSnapshot = await _firestore.collection('drivers').get();
     final drivers = driversSnapshot.docs
         .map((doc) => doc.data()['name'] as String?)
@@ -83,7 +84,6 @@ class _SalesManagementUnifiedScreenState
     Query deliveriesQuery = _firestore.collection('deliveries');
     Query workReportsQuery = _firestore.collection('work_reports');
 
-    // 日付フィルター適用
     if (_startDate != null) {
       deliveriesQuery = deliveriesQuery.where('createdAt',
           isGreaterThanOrEqualTo: _startDate);
@@ -99,13 +99,11 @@ class _SalesManagementUnifiedScreenState
           workReportsQuery.where('workDate', isLessThanOrEqualTo: endOfDay);
     }
 
-    // 顧客フィルター適用
     if (_selectedCustomer != null) {
       deliveriesQuery =
           deliveriesQuery.where('customerName', isEqualTo: _selectedCustomer);
     }
 
-    // ドライバーフィルター適用
     if (_selectedDriver != null) {
       deliveriesQuery =
           deliveriesQuery.where('driverName', isEqualTo: _selectedDriver);
@@ -113,7 +111,6 @@ class _SalesManagementUnifiedScreenState
           workReportsQuery.where('driverName', isEqualTo: _selectedDriver);
     }
 
-    // データ取得
     final deliveriesSnapshot = await deliveriesQuery.get();
     final workReportsSnapshot = await workReportsQuery.get();
 
@@ -132,7 +129,6 @@ class _SalesManagementUnifiedScreenState
     });
   }
 
-  // 休憩時間を自動計算する関数（労働基準法に基づく）
   Duration _calculateBreakTime(Duration workDuration) {
     if (workDuration.inHours > 8) {
       return Duration(hours: 1);
@@ -149,7 +145,7 @@ class _SalesManagementUnifiedScreenState
     return '${hours}h${minutes}m';
   }
 
-  // ===== 修正されたPDF生成機能（PdfServiceを使用） =====
+  // ===== PDF生成機能（Web環境完全対応版） =====
 
   Future<void> _generateInvoicePDF() async {
     if (_selectedCustomer == null) {
@@ -162,7 +158,6 @@ class _SalesManagementUnifiedScreenState
     try {
       print('🚀 請求書PDF生成開始 - 顧客: $_selectedCustomer');
 
-      // 顧客別・案件別の集計
       final customerDeliveries = _deliveries
           .where((delivery) => delivery['customerName'] == _selectedCustomer)
           .toList();
@@ -193,7 +188,6 @@ class _SalesManagementUnifiedScreenState
       );
 
       try {
-        // PdfServiceを使用してPDF生成
         final pdfBytes = await PdfService.generateInvoice(
           customerId: 'customer_001',
           customerName: _selectedCustomer!,
@@ -202,20 +196,17 @@ class _SalesManagementUnifiedScreenState
           endDate: _endDate ?? DateTime.now(),
         );
 
-        // ローディング終了
-        Navigator.pop(context);
+        Navigator.pop(context); // ローディング終了
 
         print('✅ PDF生成成功: ${pdfBytes.length} bytes');
 
-        // Web環境対応のオプションダイアログを表示
         _showWebPdfOptionsDialog(
           pdfBytes,
           'Invoice_${_selectedCustomer}_${DateFormat('yyyyMM').format(DateTime.now())}.pdf',
           'Invoice',
         );
       } catch (pdfError) {
-        // ローディング終了
-        Navigator.pop(context);
+        Navigator.pop(context); // ローディング終了
 
         print('❌ PDF生成エラー: $pdfError');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -236,7 +227,6 @@ class _SalesManagementUnifiedScreenState
     }
   }
 
-// 修正版: _generatePaymentNoticePDF()
   Future<void> _generatePaymentNoticePDF() async {
     if (_selectedDriver == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -248,7 +238,6 @@ class _SalesManagementUnifiedScreenState
     try {
       print('🚀 支払通知書PDF生成開始 - ドライバー: $_selectedDriver');
 
-      // ドライバーの稼働レポートを取得
       final driverReports = _workReports
           .where((report) => report['driverName'] == _selectedDriver)
           .toList();
@@ -279,7 +268,6 @@ class _SalesManagementUnifiedScreenState
       );
 
       try {
-        // PdfServiceを使用してPDF生成
         final pdfBytes = await PdfService.generatePaymentNotice(
           driverId: 'driver_001',
           driverName: _selectedDriver!,
@@ -288,20 +276,17 @@ class _SalesManagementUnifiedScreenState
           endDate: _endDate ?? DateTime.now(),
         );
 
-        // ローディング終了
-        Navigator.pop(context);
+        Navigator.pop(context); // ローディング終了
 
         print('✅ 支払通知書PDF生成成功: ${pdfBytes.length} bytes');
 
-        // Web環境対応のオプションダイアログを表示
         _showWebPdfOptionsDialog(
           pdfBytes,
           'PaymentNotice_${_selectedDriver}_${DateFormat('yyyyMM').format(DateTime.now())}.pdf',
           'Payment Notice',
         );
       } catch (pdfError) {
-        // ローディング終了
-        Navigator.pop(context);
+        Navigator.pop(context); // ローディング終了
 
         print('❌ 支払通知書PDF生成エラー: $pdfError');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -322,7 +307,7 @@ class _SalesManagementUnifiedScreenState
     }
   }
 
-// 新規: Web環境完全対応のPDFオプションダイアログ
+  // Web環境完全対応のPDFオプションダイアログ
   void _showWebPdfOptionsDialog(
       Uint8List pdfBytes, String filename, String title) {
     showDialog(
@@ -341,7 +326,6 @@ class _SalesManagementUnifiedScreenState
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Web環境の場合
             if (kIsWeb) ...[
               Container(
                 padding: EdgeInsets.all(12),
@@ -364,8 +348,6 @@ class _SalesManagementUnifiedScreenState
                 ),
               ),
               SizedBox(height: 16),
-
-              // Web用ダウンロードボタン
               ListTile(
                 leading: const Icon(Icons.download, color: Colors.blue),
                 title: const Text('📥 ダウンロード'),
@@ -375,8 +357,6 @@ class _SalesManagementUnifiedScreenState
                   _downloadWebPdf(pdfBytes, filename);
                 },
               ),
-
-              // Web用プレビューボタン
               ListTile(
                 leading: const Icon(Icons.open_in_new, color: Colors.green),
                 title: const Text('👁️ 新しいタブで表示'),
@@ -387,7 +367,6 @@ class _SalesManagementUnifiedScreenState
                 },
               ),
             ] else ...[
-              // モバイル環境の場合（既存の機能）
               ListTile(
                 leading: const Icon(Icons.preview, color: Colors.blue),
                 title: const Text('プレビュー'),
@@ -422,17 +401,15 @@ class _SalesManagementUnifiedScreenState
     );
   }
 
-// 新規: Web環境専用ダウンロード機能
+  // Web環境専用ダウンロード機能
   void _downloadWebPdf(Uint8List pdfBytes, String filename) {
     try {
       print('📥 Web PDFダウンロード開始: $filename');
 
-      // ファイル名を安全な形式に
       final safeFilename = filename.replaceAll(RegExp(r'[^\w\-_\.]'), '_');
       final finalFilename =
           safeFilename.endsWith('.pdf') ? safeFilename : '$safeFilename.pdf';
 
-      // Web環境でのダウンロード実装
       final blob = html.Blob([pdfBytes], 'application/pdf');
       final url = html.Url.createObjectUrlFromBlob(blob);
 
@@ -444,7 +421,6 @@ class _SalesManagementUnifiedScreenState
       anchor.click();
       html.document.body!.removeChild(anchor);
 
-      // メモリクリーンアップ
       html.Url.revokeObjectUrl(url);
 
       print('✅ Web PDFダウンロード成功');
@@ -466,16 +442,14 @@ class _SalesManagementUnifiedScreenState
     }
   }
 
-// 新規: Web環境専用プレビュー機能
+  // Web環境専用プレビュー機能
   void _previewWebPdf(Uint8List pdfBytes, String title) {
     try {
       print('👁️ Web PDFプレビュー開始: $title');
 
-      // Web環境でのプレビュー実装
       final blob = html.Blob([pdfBytes], 'application/pdf');
       final url = html.Url.createObjectUrlFromBlob(blob);
 
-      // 新しいタブで開く
       html.window.open(url, '_blank');
 
       print('✅ Web PDFプレビュー成功');
@@ -497,93 +471,7 @@ class _SalesManagementUnifiedScreenState
     }
   }
 
-  Future<void> _generatePaymentNoticePDF() async {
-    if (_selectedDriver == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('支払通知書生成にはドライバーを選択してください')),
-      );
-      return;
-    }
-
-    try {
-      // ドライバーの稼働レポートを取得
-      final driverReports = _workReports
-          .where((report) => report['driverName'] == _selectedDriver)
-          .toList();
-
-      if (driverReports.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('選択したドライバーの稼働データがありません')),
-        );
-        return;
-      }
-
-      // PdfServiceを使用してPDF生成
-      final pdfBytes = await PdfService.generatePaymentNotice(
-        driverId: 'driver_001',
-        driverName: _selectedDriver!, // 英語版なので名前はそのまま
-        workReports: driverReports,
-        startDate: _startDate ?? DateTime.now().subtract(Duration(days: 30)),
-        endDate: _endDate ?? DateTime.now(),
-      );
-
-      // PDF表示オプションダイアログを表示
-      _showPdfOptionsDialog(
-        pdfBytes,
-        'PaymentNotice_${_selectedDriver}_${DateFormat('yyyyMM').format(DateTime.now())}.pdf',
-        'Payment Notice',
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('PDF生成エラー: $e')),
-      );
-    }
-  }
-
-  // PDF出力オプションダイアログ（PdfServiceのメソッドを使用）
-  void _showPdfOptionsDialog(
-      Uint8List pdfBytes, String filename, String title) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('$title - 出力オプション'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.preview, color: Colors.blue),
-              title: const Text('プレビュー'),
-              subtitle: const Text('PDFを画面で確認'),
-              onTap: () async {
-                Navigator.pop(context);
-                await PdfService.previewPdf(pdfBytes, title);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.print, color: Colors.green),
-              title: const Text('印刷'),
-              subtitle: const Text('直接印刷'),
-              onTap: () async {
-                Navigator.pop(context);
-                await PdfService.printPdf(pdfBytes, title);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.download, color: Colors.orange),
-              title: const Text('ダウンロード'),
-              subtitle: const Text('ファイルとして保存'),
-              onTap: () async {
-                Navigator.pop(context);
-                await PdfService.downloadPdf(pdfBytes, filename);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ===== 既存のUI構築メソッド =====
+  // ===== UI構築メソッド =====
 
   Widget _buildFilterSection() {
     return Card(
@@ -595,8 +483,6 @@ class _SalesManagementUnifiedScreenState
             Text('フィルター',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             SizedBox(height: 16),
-
-            // 日付範囲
             Row(
               children: [
                 Expanded(
@@ -638,8 +524,6 @@ class _SalesManagementUnifiedScreenState
                 ),
               ],
             ),
-
-            // 顧客・ドライバー選択
             Row(
               children: [
                 Expanded(
@@ -675,10 +559,7 @@ class _SalesManagementUnifiedScreenState
                 ),
               ],
             ),
-
             SizedBox(height: 16),
-
-            // リセットボタン
             ElevatedButton(
               onPressed: () {
                 setState(() {
@@ -708,7 +589,7 @@ class _SalesManagementUnifiedScreenState
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             SizedBox(height: 16),
 
-            // 🔍 診断ボタンを最初に追加
+            // 診断ボタン
             Container(
               margin: EdgeInsets.only(bottom: 16),
               padding: EdgeInsets.all(16),
@@ -776,7 +657,7 @@ class _SalesManagementUnifiedScreenState
               ),
             ),
 
-            // 既存の請求書生成セクション
+            // 請求書生成セクション
             Container(
               margin: EdgeInsets.only(bottom: 16),
               padding: EdgeInsets.all(16),
@@ -823,7 +704,7 @@ class _SalesManagementUnifiedScreenState
               ),
             ),
 
-            // 支払通知書生成セクション（既存のまま）
+            // 支払通知書生成セクション
             Container(
               padding: EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -881,10 +762,8 @@ class _SalesManagementUnifiedScreenState
   }
 
   Widget _buildDataSummary() {
-    // 売上集計
     final totalRevenue = _deliveries.fold<double>(
         0, (sum, delivery) => sum + (delivery['fee']?.toDouble() ?? 0));
-
     final totalPayments = _workReports.fold<double>(
         0, (sum, report) => sum + (report['totalAmount']?.toDouble() ?? 0));
 
@@ -973,24 +852,17 @@ class _SalesManagementUnifiedScreenState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ヘッダー行
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  log['driverName'] ?? '不明',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  workDate?.toString().split(' ')[0] ?? '不明',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                ),
+                Text(log['driverName'] ?? '不明',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                Text(workDate?.toString().split(' ')[0] ?? '不明',
+                    style: TextStyle(fontSize: 14, color: Colors.grey[600])),
               ],
             ),
-
             SizedBox(height: 12),
-
-            // 稼働時間情報
             Row(
               children: [
                 Expanded(
@@ -1046,10 +918,7 @@ class _SalesManagementUnifiedScreenState
                 ),
               ],
             ),
-
             SizedBox(height: 12),
-
-            // 休憩時間と実働時間
             Container(
               padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -1077,11 +946,7 @@ class _SalesManagementUnifiedScreenState
                       ],
                     ),
                   ),
-                  Container(
-                    width: 1,
-                    height: 30,
-                    color: Colors.grey[300],
-                  ),
+                  Container(width: 1, height: 30, color: Colors.grey[300]),
                   Expanded(
                     child: Column(
                       children: [
@@ -1101,10 +966,7 @@ class _SalesManagementUnifiedScreenState
                 ],
               ),
             ),
-
             SizedBox(height: 12),
-
-            // 案件と報酬情報
             Row(
               children: [
                 Expanded(
@@ -1114,10 +976,8 @@ class _SalesManagementUnifiedScreenState
                       Text('案件',
                           style:
                               TextStyle(fontSize: 12, color: Colors.grey[600])),
-                      Text(
-                        log['selectedDelivery'] ?? '不明',
-                        style: TextStyle(fontSize: 14),
-                      ),
+                      Text(log['selectedDelivery'] ?? '不明',
+                          style: TextStyle(fontSize: 14)),
                     ],
                   ),
                 ),
@@ -1166,8 +1026,6 @@ class _SalesManagementUnifiedScreenState
         children: [
           _buildFilterSection(),
           SizedBox(height: 16),
-
-          // 稼働ログリスト
           _workReports.isEmpty
               ? Card(
                   child: Padding(
@@ -1176,11 +1034,9 @@ class _SalesManagementUnifiedScreenState
                       children: [
                         Icon(Icons.work_off, size: 64, color: Colors.grey[400]),
                         SizedBox(height: 16),
-                        Text(
-                          '稼働ログがありません',
-                          style:
-                              TextStyle(fontSize: 16, color: Colors.grey[600]),
-                        ),
+                        Text('稼働ログがありません',
+                            style: TextStyle(
+                                fontSize: 16, color: Colors.grey[600])),
                       ],
                     ),
                   ),
@@ -1188,8 +1044,7 @@ class _SalesManagementUnifiedScreenState
               : Column(
                   children: _workReports
                       .map((log) => _buildWorkLogCard(log))
-                      .toList(),
-                ),
+                      .toList()),
         ],
       ),
     );
@@ -1224,18 +1079,9 @@ class _SalesManagementUnifiedScreenState
           unselectedLabelColor: Colors.white70,
           indicatorColor: Colors.white,
           tabs: [
-            Tab(
-              icon: Icon(Icons.analytics),
-              text: '売上データ',
-            ),
-            Tab(
-              icon: Icon(Icons.schedule),
-              text: '稼働ログ',
-            ),
-            Tab(
-              icon: Icon(Icons.picture_as_pdf),
-              text: 'PDF出力',
-            ),
+            Tab(icon: Icon(Icons.analytics), text: '売上データ'),
+            Tab(icon: Icon(Icons.schedule), text: '稼働ログ'),
+            Tab(icon: Icon(Icons.picture_as_pdf), text: 'PDF出力'),
           ],
         ),
       ),
@@ -1243,11 +1089,7 @@ class _SalesManagementUnifiedScreenState
           ? Center(child: CircularProgressIndicator())
           : TabBarView(
               controller: _tabController,
-              children: [
-                _buildSalesTab(),
-                _buildWorkLogTab(),
-                _buildPDFTab(),
-              ],
+              children: [_buildSalesTab(), _buildWorkLogTab(), _buildPDFTab()],
             ),
     );
   }
