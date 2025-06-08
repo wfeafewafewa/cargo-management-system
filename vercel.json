@@ -1,7 +1,7 @@
 {
-  "installCommand": "curl -fsSL https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.24.5-stable.tar.xz | tar -xJ && git config --global --add safe.directory $PWD/flutter && export PATH=\"$PATH:$PWD/flutter/bin\" && flutter config --no-analytics && flutter doctor --accept-licenses && flutter pub get",
-  "buildCommand": "export PATH=\"$PATH:$PWD/flutter/bin\" && flutter build web --release",
   "outputDirectory": "build/web",
+  "buildCommand": "echo 'Using pre-built Flutter web assets'",
+  "installCommand": "echo 'No install required'",
   "rewrites": [
     {
       "source": "/(.*)",

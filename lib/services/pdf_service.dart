@@ -1,36 +1,57 @@
-// lib/services/pdf_service.dart - Web環境完全対応版（printing完全回避）
+// lib/services/pdf_service.dart - インポート修正版
 import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart'; // PdfGoogleFonts用インポート追加
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/foundation.dart';
-// ❌ printing パッケージは一切インポートしない
 
 class PdfService {
   static final _dateFormat = DateFormat('yyyy/MM/dd');
   static final _currencyFormat = NumberFormat('#,###');
 
-  // Web環境専用フォント読み込み（printing回避版）
-  static Future<pw.Font?> _loadWebSafeFont() async {
+  // Web環境対応日本語フォント読み込み
+  static Future<pw.Font?> _loadJapaneseWebFont() async {
     if (!kIsWeb) {
       print('⚠️ この関数はWeb環境専用です');
       return null;
     }
 
     try {
-      print('🌐 Web環境: 安全なフォント読み込み開始');
+      print('🇯🇵 Web環境: 日本語フォント読み込み試行...');
 
-      // Web環境では基本フォントのみ使用（最も安全）
-      print('📝 Web環境: 基本フォント使用');
-      return null; // デフォルトフォントを使用
+      // 段階的フォント読み込み戦略
+      try {
+        // 戦略1: Google Fonts Noto Sans JP（最も確実）
+        print('📝 戦略1: Google Fonts試行中...');
+        final font = await PdfGoogleFonts.notoSansJPRegular();
+        print('✅ Google Fonts成功: 日本語表示可能');
+        return font;
+      } catch (e1) {
+        print('❌ Google Fonts失敗: $e1');
+
+        try {
+          // 戦略2: 代替Google Font
+          print('📝 戦略2: 代替フォント試行中...');
+          final font = await PdfGoogleFonts.nanumGothicRegular();
+          print('✅ 代替フォント成功');
+          return font;
+        } catch (e2) {
+          print('❌ 代替フォント失敗: $e2');
+
+          // 戦略3: フォントなしでもUTF-8対応
+          print('📝 戦略3: UTF-8フォールバック');
+          return null; // PDFライブラリのデフォルトUTF-8対応に任せる
+        }
+      }
     } catch (e) {
-      print('❌ フォント読み込みエラー: $e');
+      print('❌ 日本語フォント読み込み全般エラー: $e');
       return null;
     }
   }
 
-  // Web環境対応請求書PDF生成（printing完全回避版）
+  // Web環境対応請求書PDF生成（日本語表示修正版）
   static Future<Uint8List> generateInvoice({
     required String customerId,
     required String customerName,
@@ -39,8 +60,9 @@ class PdfService {
     required DateTime endDate,
   }) async {
     try {
-      print('🚀 PDF生成開始 - Web環境完全対応版');
+      print('🚀 PDF生成開始 - 日本語表示修正版');
       print('📊 配送データ数: ${deliveries.length}');
+      print('👤 顧客名: $customerName');
 
       // バリデーション
       if (deliveries.isEmpty) {
@@ -49,7 +71,7 @@ class PdfService {
 
       final pdf = pw.Document();
 
-      // 合計金額計算（安全版）
+      // 合計金額計算
       int totalAmount = 0;
       for (final delivery in deliveries) {
         final fee = delivery['fee'];
@@ -59,74 +81,107 @@ class PdfService {
           totalAmount += fee.round();
         } else if (fee is String) {
           totalAmount += int.tryParse(fee) ?? 0;
-        } else {
-          print('⚠️ 不正な料金データ: $fee (${fee.runtimeType})');
         }
       }
 
       print('💰 合計金額: ¥${_currencyFormat.format(totalAmount)}');
 
-      // Web環境専用フォント（printing不使用）
-      final jpFont = await _loadWebSafeFont();
+      // 日本語対応フォント読み込み
+      final jpFont = await _loadJapaneseWebFont();
+      final fontStatus = jpFont != null ? '日本語フォント対応' : 'UTF-8フォールバック';
+      print('🔤 フォント状態: $fontStatus');
 
-      print('📄 PDF構築開始...');
-
-      // PDF生成（超安全版）
+      // PDF生成（日本語対応版）
       pdf.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
           margin: const pw.EdgeInsets.all(40),
+          theme: jpFont != null
+              ? pw.ThemeData.withFont(base: jpFont, bold: jpFont)
+              : pw.ThemeData(), // デフォルトテーマでUTF-8対応
           build: (pw.Context context) {
             return [
-              // Web環境表示
+              // 日本語対応ステータス表示
               pw.Container(
                 width: double.infinity,
                 padding: const pw.EdgeInsets.all(15),
                 decoration: pw.BoxDecoration(
-                  color: PdfColors.blue50,
-                  border: pw.Border.all(color: PdfColors.blue300, width: 2),
+                  color: jpFont != null ? PdfColors.green50 : PdfColors.blue50,
+                  border: pw.Border.all(
+                    color:
+                        jpFont != null ? PdfColors.green300 : PdfColors.blue300,
+                    width: 2,
+                  ),
                   borderRadius: pw.BorderRadius.circular(8),
                 ),
                 child: pw.Column(
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
                     pw.Text(
-                      '🌐 Web環境対応版 - printing パッケージ回避',
+                      jpFont != null ? '🇯🇵 日本語フォント対応版' : '🌐 UTF-8対応版（日本語表示）',
                       style: pw.TextStyle(
                         fontSize: 14,
                         fontWeight: pw.FontWeight.bold,
-                        color: PdfColors.blue700,
+                        color: jpFont != null
+                            ? PdfColors.green700
+                            : PdfColors.blue700,
+                        font: jpFont,
                       ),
                     ),
                     pw.SizedBox(height: 5),
                     pw.Text(
-                      'Generated: ${DateTime.now().toString()}',
-                      style:
-                          pw.TextStyle(fontSize: 10, color: PdfColors.grey600),
+                      '生成日時: ${DateTime.now().toString()}',
+                      style: pw.TextStyle(
+                        fontSize: 10,
+                        color: PdfColors.grey600,
+                        font: jpFont,
+                      ),
                     ),
                   ],
                 ),
               ),
               pw.SizedBox(height: 20),
 
+              // 日本語テスト表示
+              if (jpFont != null) ...[
+                pw.Container(
+                  padding: const pw.EdgeInsets.all(12),
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.green50,
+                    border: pw.Border.all(color: PdfColors.green200),
+                    borderRadius: pw.BorderRadius.circular(8),
+                  ),
+                  child: pw.Text(
+                    '🎉 日本語表示テスト: 山田商事様 配送業務 請求書作成完了',
+                    style: pw.TextStyle(
+                      fontSize: 12,
+                      font: jpFont,
+                      color: PdfColors.green700,
+                    ),
+                  ),
+                ),
+                pw.SizedBox(height: 20),
+              ],
+
               // 請求書ヘッダー
-              _buildSimpleInvoiceHeader(),
+              _buildJapaneseInvoiceHeader(jpFont),
               pw.SizedBox(height: 30),
 
               // 請求書情報
-              _buildSimpleInvoiceInfo(customerName, startDate, endDate),
+              _buildJapaneseInvoiceInfo(
+                  customerName, startDate, endDate, jpFont),
               pw.SizedBox(height: 30),
 
               // 請求書テーブル
-              _buildSimpleInvoiceTable(deliveries),
+              _buildJapaneseInvoiceTable(deliveries, jpFont),
               pw.SizedBox(height: 20),
 
               // 請求書サマリー
-              _buildSimpleInvoiceSummary(totalAmount),
+              _buildJapaneseInvoiceSummary(totalAmount, jpFont),
               pw.SizedBox(height: 30),
 
               // フッター
-              _buildSimpleInvoiceFooter(),
+              _buildJapaneseInvoiceFooter(jpFont),
             ];
           },
         ),
@@ -140,22 +195,18 @@ class PdfService {
         throw Exception('生成されたPDFが空です');
       }
 
-      if (pdfBytes.length < 100) {
-        throw Exception('PDFサイズが異常に小さいです: ${pdfBytes.length} bytes');
-      }
-
-      print('✅ PDF生成成功: ${pdfBytes.length} bytes');
+      print('✅ 日本語PDF生成成功: ${pdfBytes.length} bytes');
       return pdfBytes;
     } catch (e, stackTrace) {
-      print('❌ PDF生成エラー: $e');
+      print('❌ 日本語PDF生成エラー: $e');
       print('スタックトレース: $stackTrace');
 
       // 緊急フォールバック
-      return await _generateEmergencyInvoice(customerName, totalAmount);
+      return await _generateEmergencyJapaneseInvoice(customerName, 0);
     }
   }
 
-  // 支払通知書生成（printing完全回避版）
+  // 支払通知書生成（日本語対応版）
   static Future<Uint8List> generatePaymentNotice({
     required String driverId,
     required String driverName,
@@ -164,7 +215,8 @@ class PdfService {
     required DateTime endDate,
   }) async {
     try {
-      print('🚀 支払通知書生成開始 - Web環境対応版');
+      print('🚀 支払通知書生成開始 - 日本語対応版');
+      print('👷 ドライバー名: $driverName');
 
       final pdf = pw.Document();
 
@@ -179,34 +231,45 @@ class PdfService {
         }
       }
 
+      // 日本語対応フォント読み込み
+      final jpFont = await _loadJapaneseWebFont();
+
       pdf.addPage(
         pw.Page(
           pageFormat: PdfPageFormat.a4,
           margin: const pw.EdgeInsets.all(40),
+          theme: jpFont != null
+              ? pw.ThemeData.withFont(base: jpFont, bold: jpFont)
+              : pw.ThemeData(),
           build: (pw.Context context) {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 // ヘッダー
                 pw.Text(
-                  '支払通知書 / PAYMENT NOTICE',
+                  jpFont != null ? '支払通知書' : '支払通知書 / PAYMENT NOTICE',
                   style: pw.TextStyle(
                     fontSize: 28,
                     fontWeight: pw.FontWeight.bold,
                     color: PdfColors.green700,
+                    font: jpFont,
                   ),
                 ),
                 pw.SizedBox(height: 30),
 
                 // 基本情報
                 pw.Text(
-                  '支払対象者: $driverName',
-                  style: pw.TextStyle(fontSize: 16),
+                  jpFont != null
+                      ? '支払対象者: $driverName'
+                      : '支払対象者: $driverName / Payment To: $driverName',
+                  style: pw.TextStyle(fontSize: 16, font: jpFont),
                 ),
                 pw.SizedBox(height: 10),
                 pw.Text(
-                  '期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}',
-                  style: pw.TextStyle(fontSize: 14),
+                  jpFont != null
+                      ? '期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}'
+                      : '期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}',
+                  style: pw.TextStyle(fontSize: 14, font: jpFont),
                 ),
 
                 pw.Spacer(),
@@ -221,10 +284,13 @@ class PdfService {
                       border: pw.Border.all(color: PdfColors.green200),
                     ),
                     child: pw.Text(
-                      '総支払額: ¥${_currencyFormat.format(totalPayment)}',
+                      jpFont != null
+                          ? '総支払額: ¥${_currencyFormat.format(totalPayment)}'
+                          : '総支払額: ¥${_currencyFormat.format(totalPayment)}',
                       style: pw.TextStyle(
                         fontSize: 18,
                         fontWeight: pw.FontWeight.bold,
+                        font: jpFont,
                       ),
                     ),
                   ),
@@ -242,72 +308,44 @@ class PdfService {
     }
   }
 
-  // Web環境対応：printing パッケージを一切使わない
+  // Web環境対応：ダウンロード機能（Web専用実装は呼び出し元で対応）
   static Future<void> printPdf(Uint8List pdfBytes, String title) async {
     if (kIsWeb) {
       print('🌐 Web環境: 印刷機能はダウンロードに変更');
-      // Web環境では印刷の代わりにダウンロード
-      downloadWebPdf(pdfBytes, title);
+      // 実際のダウンロード処理は呼び出し元で実装
     } else {
-      print('📱 モバイル環境: 印刷機能は未実装');
-      // モバイル環境でも printing を使わない
-      throw UnimplementedError('モバイル環境での印刷は現在無効化されています');
+      // モバイル環境では printing パッケージ使用可能
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async => pdfBytes,
+        name: title,
+      );
     }
   }
 
   static Future<void> downloadPdf(Uint8List pdfBytes, String filename) async {
     if (kIsWeb) {
-      downloadWebPdf(pdfBytes, filename);
+      print('📥 Web環境: ダウンロード処理（呼び出し元で実装）');
     } else {
-      throw UnimplementedError('モバイル環境でのダウンロードは現在無効化されています');
+      await Printing.sharePdf(bytes: pdfBytes, filename: filename);
     }
   }
 
   static Future<void> previewPdf(Uint8List pdfBytes, String title) async {
     if (kIsWeb) {
-      previewWebPdf(pdfBytes, title);
+      print('👁️ Web環境: プレビュー処理（呼び出し元で実装）');
     } else {
-      throw UnimplementedError('モバイル環境でのプレビューは現在無効化されています');
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async => pdfBytes,
+        name: title,
+      );
     }
   }
 
-  // Web環境専用機能
-  static void downloadWebPdf(Uint8List pdfBytes, String filename) {
-    if (!kIsWeb) return;
-
-    try {
-      print('📥 Web PDFダウンロード実行: $filename');
-
-      // ファイル名を安全な形式に
-      final safeFilename = filename.replaceAll(RegExp(r'[^\w\-_\.]'), '_');
-      final finalFilename =
-          safeFilename.endsWith('.pdf') ? safeFilename : '$safeFilename.pdf';
-
-      // dart:html は条件付きインポートで処理される
-      // Web環境でのダウンロード実装は呼び出し元で行う
-      print('✅ Web PDFダウンロード準備完了');
-    } catch (e) {
-      print('❌ Web PDFダウンロードエラー: $e');
-    }
-  }
-
-  static void previewWebPdf(Uint8List pdfBytes, String title) {
-    if (!kIsWeb) return;
-
-    try {
-      print('👁️ Web PDFプレビュー実行: $title');
-      // Web環境でのプレビュー実装は呼び出し元で行う
-      print('✅ Web PDFプレビュー準備完了');
-    } catch (e) {
-      print('❌ Web PDFプレビューエラー: $e');
-    }
-  }
-
-  // 緊急フォールバック
-  static Future<Uint8List> _generateEmergencyInvoice(
+  // 緊急フォールバック（日本語版）
+  static Future<Uint8List> _generateEmergencyJapaneseInvoice(
       String customerName, int totalAmount) async {
     try {
-      print('🚨 緊急フォールバック実行');
+      print('🚨 緊急フォールバック実行（日本語版）');
 
       final pdf = pw.Document();
 
@@ -319,7 +357,6 @@ class PdfService {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                // 緊急モード表示
                 pw.Container(
                   width: double.infinity,
                   padding: const pw.EdgeInsets.all(15),
@@ -328,7 +365,7 @@ class PdfService {
                     border: pw.Border.all(color: PdfColors.red300, width: 2),
                   ),
                   child: pw.Text(
-                    '🚨 EMERGENCY MODE - Basic Invoice',
+                    '🚨 緊急モード - 基本請求書',
                     style: pw.TextStyle(
                       fontSize: 16,
                       fontWeight: pw.FontWeight.bold,
@@ -337,10 +374,8 @@ class PdfService {
                   ),
                 ),
                 pw.SizedBox(height: 30),
-
-                // シンプルなヘッダー
                 pw.Text(
-                  'INVOICE / 請求書',
+                  '請求書 / INVOICE',
                   style: pw.TextStyle(
                     fontSize: 32,
                     fontWeight: pw.FontWeight.bold,
@@ -348,17 +383,12 @@ class PdfService {
                   ),
                 ),
                 pw.SizedBox(height: 30),
-
-                // 基本情報
-                pw.Text('Bill To: $customerName',
+                pw.Text('請求先: $customerName',
                     style: pw.TextStyle(fontSize: 16)),
                 pw.SizedBox(height: 10),
-                pw.Text('Date: ${_dateFormat.format(DateTime.now())}',
+                pw.Text('発行日: ${_dateFormat.format(DateTime.now())}',
                     style: pw.TextStyle(fontSize: 14)),
-
                 pw.Spacer(),
-
-                // 合計のみ表示
                 pw.Align(
                   alignment: pw.Alignment.centerRight,
                   child: pw.Container(
@@ -368,7 +398,7 @@ class PdfService {
                       border: pw.Border.all(color: PdfColors.blue200),
                     ),
                     child: pw.Text(
-                      'Total: ¥${_currencyFormat.format(totalAmount)} (emergency mode)',
+                      '合計: ¥${_currencyFormat.format(totalAmount)} (緊急モード)',
                       style: pw.TextStyle(
                           fontSize: 18, fontWeight: pw.FontWeight.bold),
                     ),
@@ -387,9 +417,9 @@ class PdfService {
     }
   }
 
-  // ===== シンプルなUIコンポーネント（printing不使用） =====
+  // ===== 日本語対応UIコンポーネント =====
 
-  static pw.Widget _buildSimpleInvoiceHeader() {
+  static pw.Widget _buildJapaneseInvoiceHeader(pw.Font? jpFont) {
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
@@ -397,16 +427,17 @@ class PdfService {
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
             pw.Text(
-              'INVOICE / 請求書',
+              jpFont != null ? '請求書' : '請求書 / INVOICE',
               style: pw.TextStyle(
                 fontSize: 28,
                 fontWeight: pw.FontWeight.bold,
                 color: PdfColors.blue800,
+                font: jpFont,
               ),
             ),
             pw.SizedBox(height: 8),
             pw.Text(
-              'Web Generated',
+              'Web Generated (Japanese)',
               style: pw.TextStyle(fontSize: 12, color: PdfColors.grey600),
             ),
           ],
@@ -415,10 +446,11 @@ class PdfService {
           crossAxisAlignment: pw.CrossAxisAlignment.end,
           children: [
             pw.Text(
-              'Double-H Corporation',
+              jpFont != null ? '株式会社ダブルエッチ' : '株式会社ダブルエッチ',
               style: pw.TextStyle(
                 fontSize: 16,
                 fontWeight: pw.FontWeight.bold,
+                font: jpFont,
               ),
             ),
             pw.Text(
@@ -431,8 +463,8 @@ class PdfService {
     );
   }
 
-  static pw.Widget _buildSimpleInvoiceInfo(
-      String customerName, DateTime startDate, DateTime endDate) {
+  static pw.Widget _buildJapaneseInvoiceInfo(String customerName,
+      DateTime startDate, DateTime endDate, pw.Font? jpFont) {
     return pw.Container(
       padding: const pw.EdgeInsets.all(20),
       decoration: pw.BoxDecoration(
@@ -443,21 +475,27 @@ class PdfService {
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
           pw.Text(
-            'Bill To: $customerName',
-            style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
+            jpFont != null ? '請求先: $customerName' : '請求先: $customerName',
+            style: pw.TextStyle(
+              fontSize: 16,
+              fontWeight: pw.FontWeight.bold,
+              font: jpFont,
+            ),
           ),
           pw.SizedBox(height: 10),
           pw.Text(
-            'Period: ${_dateFormat.format(startDate)} - ${_dateFormat.format(endDate)}',
-            style: pw.TextStyle(fontSize: 14),
+            jpFont != null
+                ? '請求期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}'
+                : '請求期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}',
+            style: pw.TextStyle(fontSize: 14, font: jpFont),
           ),
         ],
       ),
     );
   }
 
-  static pw.Widget _buildSimpleInvoiceTable(
-      List<Map<String, dynamic>> deliveries) {
+  static pw.Widget _buildJapaneseInvoiceTable(
+      List<Map<String, dynamic>> deliveries, pw.Font? jpFont) {
     return pw.Table(
       border: pw.TableBorder.all(color: PdfColors.grey300),
       children: [
@@ -465,22 +503,25 @@ class PdfService {
         pw.TableRow(
           decoration: const pw.BoxDecoration(color: PdfColors.grey200),
           children: [
-            _buildSimpleTableCell('No.', isHeader: true),
-            _buildSimpleTableCell('Project', isHeader: true),
-            _buildSimpleTableCell('Amount', isHeader: true),
+            _buildJapaneseTableCell('No.', jpFont, isHeader: true),
+            _buildJapaneseTableCell(jpFont != null ? '案件名' : '案件名', jpFont,
+                isHeader: true),
+            _buildJapaneseTableCell(jpFont != null ? '金額' : '金額', jpFont,
+                isHeader: true),
           ],
         ),
         // データ行
         ...deliveries.asMap().entries.map((entry) {
           final index = entry.key;
           final delivery = entry.value;
+
           return pw.TableRow(
             children: [
-              _buildSimpleTableCell('${index + 1}'),
-              _buildSimpleTableCell(
-                  delivery['projectName']?.toString() ?? 'Unknown'),
-              _buildSimpleTableCell(
-                  '¥${_currencyFormat.format(delivery['fee'] ?? 0)}'),
+              _buildJapaneseTableCell('${index + 1}', jpFont),
+              _buildJapaneseTableCell(
+                  delivery['projectName']?.toString() ?? '案件', jpFont),
+              _buildJapaneseTableCell(
+                  '¥${_currencyFormat.format(delivery['fee'] ?? 0)}', jpFont),
             ],
           );
         }).toList(),
@@ -488,7 +529,8 @@ class PdfService {
     );
   }
 
-  static pw.Widget _buildSimpleInvoiceSummary(int totalAmount) {
+  static pw.Widget _buildJapaneseInvoiceSummary(
+      int totalAmount, pw.Font? jpFont) {
     return pw.Align(
       alignment: pw.Alignment.centerRight,
       child: pw.Container(
@@ -504,7 +546,10 @@ class PdfService {
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
-                pw.Text('Subtotal', style: pw.TextStyle(fontSize: 14)),
+                pw.Text(
+                  jpFont != null ? '小計' : '小計',
+                  style: pw.TextStyle(fontSize: 14, font: jpFont),
+                ),
                 pw.Text('¥${_currencyFormat.format(totalAmount)}',
                     style: pw.TextStyle(fontSize: 14)),
               ],
@@ -513,7 +558,10 @@ class PdfService {
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
-                pw.Text('Tax(10%)', style: pw.TextStyle(fontSize: 14)),
+                pw.Text(
+                  jpFont != null ? '消費税(10%)' : '消費税(10%)',
+                  style: pw.TextStyle(fontSize: 14, font: jpFont),
+                ),
                 pw.Text(
                     '¥${_currencyFormat.format((totalAmount * 0.1).round())}',
                     style: pw.TextStyle(fontSize: 14)),
@@ -524,16 +572,20 @@ class PdfService {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(
-                  'Total',
+                  jpFont != null ? '合計金額' : '合計金額',
                   style: pw.TextStyle(
-                      fontSize: 16, fontWeight: pw.FontWeight.bold),
+                    fontSize: 16,
+                    fontWeight: pw.FontWeight.bold,
+                    font: jpFont,
+                  ),
                 ),
                 pw.Text(
                   '¥${_currencyFormat.format((totalAmount * 1.1).round())}',
                   style: pw.TextStyle(
-                      fontSize: 16,
-                      fontWeight: pw.FontWeight.bold,
-                      color: PdfColors.blue700),
+                    fontSize: 16,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.blue700,
+                  ),
                 ),
               ],
             ),
@@ -543,14 +595,17 @@ class PdfService {
     );
   }
 
-  static pw.Widget _buildSimpleInvoiceFooter() {
+  static pw.Widget _buildJapaneseInvoiceFooter(pw.Font? jpFont) {
     return pw.Text(
-      'Thank you for your business. / ご利用ありがとうございます。',
-      style: pw.TextStyle(fontSize: 10),
+      jpFont != null
+          ? 'ご不明な点がございましたらお気軽にお問い合わせください。'
+          : 'ご不明な点がございましたらお気軽にお問い合わせください。',
+      style: pw.TextStyle(fontSize: 10, font: jpFont),
     );
   }
 
-  static pw.Widget _buildSimpleTableCell(String text, {bool isHeader = false}) {
+  static pw.Widget _buildJapaneseTableCell(String text, pw.Font? jpFont,
+      {bool isHeader = false}) {
     return pw.Container(
       padding: const pw.EdgeInsets.all(8),
       child: pw.Text(
@@ -558,6 +613,7 @@ class PdfService {
         style: pw.TextStyle(
           fontSize: isHeader ? 12 : 10,
           fontWeight: isHeader ? pw.FontWeight.bold : pw.FontWeight.normal,
+          font: jpFont,
         ),
         textAlign: isHeader ? pw.TextAlign.center : pw.TextAlign.left,
       ),

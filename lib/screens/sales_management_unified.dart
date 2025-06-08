@@ -1,9 +1,9 @@
+import 'package:pdf/widgets.dart' as pw;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'dart:typed_data';
 import '../services/pdf_service.dart';
-import '../debug/pdf_debug_test.dart'; // 診断テスト用
 import 'package:flutter/foundation.dart';
 import 'dart:html' as html;
 
@@ -145,7 +145,7 @@ class _SalesManagementUnifiedScreenState
     return '${hours}h${minutes}m';
   }
 
-  // ===== PDF生成機能（Web環境完全対応版） =====
+  // ===== 本番用PDF生成機能 =====
 
   Future<void> _generateInvoicePDF() async {
     if (_selectedCustomer == null) {
@@ -156,9 +156,8 @@ class _SalesManagementUnifiedScreenState
     }
 
     try {
-      print('🚀 超安全版PDF生成開始');
+      print('🚀 請求書PDF生成開始 - 顧客: $_selectedCustomer');
 
-      // 顧客別・案件別の集計
       final customerDeliveries = _deliveries
           .where((delivery) => delivery['customerName'] == _selectedCustomer)
           .toList();
@@ -172,106 +171,46 @@ class _SalesManagementUnifiedScreenState
 
       print('📦 配送データ件数: ${customerDeliveries.length}');
 
-      try {
-        // 超安全版：PdfServiceを使わずに直接PDF生成
-        print('📝 直接PDF生成開始...');
-
-        final pdf = pw.Document();
-
-        // 合計金額計算
-        int totalAmount = 0;
-        for (final delivery in customerDeliveries) {
-          final fee = delivery['fee'];
-          if (fee is int) {
-            totalAmount += fee;
-          } else if (fee is double) {
-            totalAmount += fee.round();
-          }
-        }
-
-        print('💰 合計金額計算完了: $totalAmount');
-
-        // 超シンプルなPDF作成
-        pdf.addPage(
-          pw.Page(
-            build: (context) => pw.Center(
-              child: pw.Column(
-                mainAxisAlignment: pw.MainAxisAlignment.center,
-                children: [
-                  pw.Text(
-                    'INVOICE TEST',
-                    style: pw.TextStyle(
-                        fontSize: 32, fontWeight: pw.FontWeight.bold),
-                  ),
-                  pw.SizedBox(height: 20),
-                  pw.Text('Customer: $_selectedCustomer',
-                      style: pw.TextStyle(fontSize: 16)),
-                  pw.SizedBox(height: 10),
-                  pw.Text(
-                      'Total: ¥${NumberFormat('#,###').format(totalAmount)}',
-                      style: pw.TextStyle(fontSize: 20)),
-                  pw.SizedBox(height: 20),
-                  pw.Text('Generated: ${DateTime.now()}',
-                      style: pw.TextStyle(fontSize: 12)),
-                ],
-              ),
-            ),
-          ),
-        );
-
-        print('💾 PDF保存開始...');
-        final pdfBytes = await pdf.save();
-        print('✅ PDF保存成功: ${pdfBytes.length} bytes');
-
-        // ここで dart:html を使わずに結果表示のみ
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Row(
-              children: [
-                Icon(Icons.check_circle, color: Colors.green),
-                SizedBox(width: 8),
-                Text('PDF生成成功！'),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('🎉 PDFが正常に生成されました！'),
-                SizedBox(height: 10),
-                Text('サイズ: ${pdfBytes.length} bytes'),
-                SizedBox(height: 10),
-                Text('顧客: $_selectedCustomer'),
-                SizedBox(height: 10),
-                Text('合計: ¥${NumberFormat('#,###').format(totalAmount)}'),
-                SizedBox(height: 20),
-                Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.green.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.green.shade200),
-                  ),
-                  child: Text(
-                    '✅ dart:html エラー回避成功！\nPDF生成機能は正常に動作しています。',
-                    style: TextStyle(color: Colors.green.shade700),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text('OK'),
-              ),
+      // ローディング表示
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('PDF生成中...'),
             ],
           ),
+        ),
+      );
+
+      try {
+        // PdfServiceを使用して本格的な請求書生成
+        final pdfBytes = await PdfService.generateInvoice(
+          customerId: 'customer_001',
+          customerName: _selectedCustomer!,
+          deliveries: customerDeliveries,
+          startDate: _startDate ?? DateTime.now().subtract(Duration(days: 30)),
+          endDate: _endDate ?? DateTime.now(),
+        );
+
+        Navigator.pop(context); // ローディング終了
+
+        print('✅ PDF生成成功: ${pdfBytes.length} bytes');
+
+        // Web環境対応のオプションダイアログを表示
+        _showWebPdfOptionsDialog(
+          pdfBytes,
+          'Invoice_${_selectedCustomer}_${DateFormat('yyyyMM').format(DateTime.now())}.pdf',
+          'Invoice',
         );
       } catch (pdfError) {
-        print('❌ PDF生成エラー: $pdfError');
-        print('❌ エラー詳細: ${pdfError.toString()}');
+        Navigator.pop(context); // ローディング終了
 
+        print('❌ PDF生成エラー: $pdfError');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('PDF生成エラー: $pdfError'),
@@ -279,10 +218,8 @@ class _SalesManagementUnifiedScreenState
           ),
         );
       }
-    } catch (e, stackTrace) {
-      print('❌ 全般エラー: $e');
-      print('❌ スタックトレース: $stackTrace');
-
+    } catch (e) {
+      print('❌ 請求書生成全般エラー: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('エラーが発生しました: $e'),
@@ -482,9 +419,9 @@ class _SalesManagementUnifiedScreenState
         ..setAttribute('download', finalFilename)
         ..style.display = 'none';
 
-      html.document.body!.appendChild(anchor);
+      html.document.body!.children.add(anchor);
       anchor.click();
-      html.document.body!.removeChild(anchor);
+      html.document.body!.children.remove(anchor);
 
       html.Url.revokeObjectUrl(url);
 
@@ -653,74 +590,6 @@ class _SalesManagementUnifiedScreenState
             Text('PDF出力',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             SizedBox(height: 16),
-
-            // 診断ボタン
-            Container(
-              margin: EdgeInsets.only(bottom: 16),
-              padding: EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.shade300),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.bug_report, color: Colors.orange.shade700),
-                      SizedBox(width: 8),
-                      Text(
-                        '🔍 PDF診断テスト（一時的）',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange.shade700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    'エラー原因を特定するための診断テストです',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                  ),
-                  SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: () async {
-                        print('🔍 PDF診断開始...');
-                        try {
-                          await PdfDebugTest.runDiagnostics();
-                          await PdfDebugTest.stepByStepTest();
-
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('診断完了！コンソールログを確認してください'),
-                              backgroundColor: Colors.green,
-                            ),
-                          );
-                        } catch (e) {
-                          print('❌ 診断エラー: $e');
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('診断エラー: $e'),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        }
-                      },
-                      icon: Icon(Icons.bug_report),
-                      label: Text('PDF診断実行'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
 
             // 請求書生成セクション
             Container(
