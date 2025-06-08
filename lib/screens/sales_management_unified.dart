@@ -1,9 +1,5 @@
-import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart';
-import 'dart:typed_data'; // Uint8List用
-import '../services/pdf_service.dart'; // PDF Serviceをインポート
-import '../debug/pdf_debug_test.dart';
+import 'package:flutter/foundation.dart';
+import 'dart:html' as html;
 
 class SalesManagementUnifiedScreen extends StatefulWidget {
   @override
@@ -164,6 +160,8 @@ class _SalesManagementUnifiedScreenState
     }
 
     try {
+      print('🚀 請求書PDF生成開始 - 顧客: $_selectedCustomer');
+
       // 顧客別・案件別の集計
       final customerDeliveries = _deliveries
           .where((delivery) => delivery['customerName'] == _selectedCustomer)
@@ -176,24 +174,325 @@ class _SalesManagementUnifiedScreenState
         return;
       }
 
-      // PdfServiceを使用してPDF生成
-      final pdfBytes = await PdfService.generateInvoice(
-        customerId: 'customer_001',
-        customerName: _selectedCustomer!, // 英語版なので顧客名はそのまま
-        deliveries: customerDeliveries,
-        startDate: _startDate ?? DateTime.now().subtract(Duration(days: 30)),
-        endDate: _endDate ?? DateTime.now(),
+      print('📦 配送データ件数: ${customerDeliveries.length}');
+
+      // ローディング表示
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('PDF生成中...'),
+            ],
+          ),
+        ),
       );
 
-      // PDF表示オプションダイアログを表示
-      _showPdfOptionsDialog(
-        pdfBytes,
-        'Invoice_${_selectedCustomer}_${DateFormat('yyyyMM').format(DateTime.now())}.pdf',
-        'Invoice',
+      try {
+        // PdfServiceを使用してPDF生成
+        final pdfBytes = await PdfService.generateInvoice(
+          customerId: 'customer_001',
+          customerName: _selectedCustomer!,
+          deliveries: customerDeliveries,
+          startDate: _startDate ?? DateTime.now().subtract(Duration(days: 30)),
+          endDate: _endDate ?? DateTime.now(),
+        );
+
+        // ローディング終了
+        Navigator.pop(context);
+
+        print('✅ PDF生成成功: ${pdfBytes.length} bytes');
+
+        // Web環境対応のオプションダイアログを表示
+        _showWebPdfOptionsDialog(
+          pdfBytes,
+          'Invoice_${_selectedCustomer}_${DateFormat('yyyyMM').format(DateTime.now())}.pdf',
+          'Invoice',
+        );
+      } catch (pdfError) {
+        // ローディング終了
+        Navigator.pop(context);
+
+        print('❌ PDF生成エラー: $pdfError');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('PDF生成エラー: $pdfError'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ 請求書生成全般エラー: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('エラーが発生しました: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+// 修正版: _generatePaymentNoticePDF()
+  Future<void> _generatePaymentNoticePDF() async {
+    if (_selectedDriver == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('支払通知書生成にはドライバーを選択してください')),
+      );
+      return;
+    }
+
+    try {
+      print('🚀 支払通知書PDF生成開始 - ドライバー: $_selectedDriver');
+
+      // ドライバーの稼働レポートを取得
+      final driverReports = _workReports
+          .where((report) => report['driverName'] == _selectedDriver)
+          .toList();
+
+      if (driverReports.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('選択したドライバーの稼働データがありません')),
+        );
+        return;
+      }
+
+      print('👷 稼働レポート件数: ${driverReports.length}');
+
+      // ローディング表示
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('PDF生成中...'),
+            ],
+          ),
+        ),
+      );
+
+      try {
+        // PdfServiceを使用してPDF生成
+        final pdfBytes = await PdfService.generatePaymentNotice(
+          driverId: 'driver_001',
+          driverName: _selectedDriver!,
+          workReports: driverReports,
+          startDate: _startDate ?? DateTime.now().subtract(Duration(days: 30)),
+          endDate: _endDate ?? DateTime.now(),
+        );
+
+        // ローディング終了
+        Navigator.pop(context);
+
+        print('✅ 支払通知書PDF生成成功: ${pdfBytes.length} bytes');
+
+        // Web環境対応のオプションダイアログを表示
+        _showWebPdfOptionsDialog(
+          pdfBytes,
+          'PaymentNotice_${_selectedDriver}_${DateFormat('yyyyMM').format(DateTime.now())}.pdf',
+          'Payment Notice',
+        );
+      } catch (pdfError) {
+        // ローディング終了
+        Navigator.pop(context);
+
+        print('❌ 支払通知書PDF生成エラー: $pdfError');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('PDF生成エラー: $pdfError'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ 支払通知書生成全般エラー: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('エラーが発生しました: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+// 新規: Web環境完全対応のPDFオプションダイアログ
+  void _showWebPdfOptionsDialog(
+      Uint8List pdfBytes, String filename, String title) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              kIsWeb ? Icons.web : Icons.phone_android,
+              color: kIsWeb ? Colors.blue : Colors.green,
+            ),
+            SizedBox(width: 8),
+            Text('$title - ${kIsWeb ? "Web版" : "モバイル版"}'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Web環境の場合
+            if (kIsWeb) ...[
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.blue.shade700),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Web環境では直接ダウンロードまたは新しいタブで表示します',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: 16),
+
+              // Web用ダウンロードボタン
+              ListTile(
+                leading: const Icon(Icons.download, color: Colors.blue),
+                title: const Text('📥 ダウンロード'),
+                subtitle: const Text('PDFファイルとして保存'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _downloadWebPdf(pdfBytes, filename);
+                },
+              ),
+
+              // Web用プレビューボタン
+              ListTile(
+                leading: const Icon(Icons.open_in_new, color: Colors.green),
+                title: const Text('👁️ 新しいタブで表示'),
+                subtitle: const Text('PDFを新しいタブで確認'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _previewWebPdf(pdfBytes, title);
+                },
+              ),
+            ] else ...[
+              // モバイル環境の場合（既存の機能）
+              ListTile(
+                leading: const Icon(Icons.preview, color: Colors.blue),
+                title: const Text('プレビュー'),
+                subtitle: const Text('PDFを画面で確認'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await PdfService.previewPdf(pdfBytes, title);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.print, color: Colors.green),
+                title: const Text('印刷'),
+                subtitle: const Text('直接印刷'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await PdfService.printPdf(pdfBytes, title);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.download, color: Colors.orange),
+                title: const Text('ダウンロード'),
+                subtitle: const Text('ファイルとして保存'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await PdfService.downloadPdf(pdfBytes, filename);
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+// 新規: Web環境専用ダウンロード機能
+  void _downloadWebPdf(Uint8List pdfBytes, String filename) {
+    try {
+      print('📥 Web PDFダウンロード開始: $filename');
+
+      // ファイル名を安全な形式に
+      final safeFilename = filename.replaceAll(RegExp(r'[^\w\-_\.]'), '_');
+      final finalFilename =
+          safeFilename.endsWith('.pdf') ? safeFilename : '$safeFilename.pdf';
+
+      // Web環境でのダウンロード実装
+      final blob = html.Blob([pdfBytes], 'application/pdf');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+
+      final anchor = html.AnchorElement(href: url)
+        ..setAttribute('download', finalFilename)
+        ..style.display = 'none';
+
+      html.document.body!.appendChild(anchor);
+      anchor.click();
+      html.document.body!.removeChild(anchor);
+
+      // メモリクリーンアップ
+      html.Url.revokeObjectUrl(url);
+
+      print('✅ Web PDFダウンロード成功');
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('📥 PDFダウンロード完了: $finalFilename'),
+          backgroundColor: Colors.green,
+        ),
       );
     } catch (e) {
+      print('❌ Web PDFダウンロードエラー: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('PDF生成エラー: $e')),
+        SnackBar(
+          content: Text('ダウンロードエラー: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+// 新規: Web環境専用プレビュー機能
+  void _previewWebPdf(Uint8List pdfBytes, String title) {
+    try {
+      print('👁️ Web PDFプレビュー開始: $title');
+
+      // Web環境でのプレビュー実装
+      final blob = html.Blob([pdfBytes], 'application/pdf');
+      final url = html.Url.createObjectUrlFromBlob(blob);
+
+      // 新しいタブで開く
+      html.window.open(url, '_blank');
+
+      print('✅ Web PDFプレビュー成功');
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('👁️ PDFを新しいタブで表示しました'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      print('❌ Web PDFプレビューエラー: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('プレビューエラー: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
