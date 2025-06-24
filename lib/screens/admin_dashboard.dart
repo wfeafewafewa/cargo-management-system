@@ -211,9 +211,6 @@ class _AdminDashboardState extends State<AdminDashboard>
           PopupMenuButton<String>(
             onSelected: (value) {
               switch (value) {
-                case 'settings':
-                  Navigator.pushNamed(context, '/system-settings');
-                  break;
                 case 'profile':
                   _showUserProfile();
                   break;
@@ -228,13 +225,6 @@ class _AdminDashboardState extends State<AdminDashboard>
                 child: ListTile(
                   leading: Icon(Icons.person),
                   title: Text('プロフィール'),
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'settings',
-                child: ListTile(
-                  leading: Icon(Icons.settings),
-                  title: Text('設定'),
                 ),
               ),
               const PopupMenuDivider(),
@@ -263,8 +253,6 @@ class _AdminDashboardState extends State<AdminDashboard>
                 const SizedBox(height: 24),
                 _buildStatsSection(),
                 const SizedBox(height: 24),
-                // _buildPerformanceMetrics(), // 削除：パフォーマンス指標セクション
-                // const SizedBox(height: 24),
                 _buildQuickActions(),
                 const SizedBox(height: 24),
                 _buildRecentActivity(),
@@ -470,9 +458,6 @@ class _AdminDashboardState extends State<AdminDashboard>
     );
   }
 
-  // _buildPerformanceMetrics() メソッドを削除
-  // _buildPerformanceIndicator() メソッドを削除
-
   Widget _buildStatCard(String title, String value, IconData icon, Color color,
       {String? subtitle}) {
     return Container(
@@ -591,33 +576,6 @@ class _AdminDashboardState extends State<AdminDashboard>
                   () {
                     print('売上管理がタップされました');
                     Navigator.pushNamed(context, '/sales-management');
-                  },
-                ),
-                _buildActionButton(
-                  'レポート',
-                  Icons.analytics,
-                  Colors.purple,
-                  () {
-                    print('レポートがタップされました');
-                    Navigator.pushNamed(context, '/advanced-reports');
-                  },
-                ),
-                _buildActionButton(
-                  'システム設定',
-                  Icons.settings,
-                  Colors.deepPurple,
-                  () {
-                    print('システム設定がタップされました');
-                    Navigator.pushNamed(context, '/system-settings');
-                  },
-                ),
-                _buildActionButton(
-                  'データ管理',
-                  Icons.storage,
-                  Colors.teal,
-                  () {
-                    print('データ管理がタップされました');
-                    Navigator.pushNamed(context, '/data-management');
                   },
                 ),
               ],

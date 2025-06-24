@@ -691,7 +691,7 @@ class _DriverManagementScreenState extends State<DriverManagementScreen>
   }
 }
 
-// 修正版ドライバー登録・編集フォーム（要件対応）
+// 修正版ドライバー登録・編集フォーム（自賠責保険証書追加）
 class _DriverFormDialog extends StatefulWidget {
   final String? driverId;
   final Map<String, dynamic>? initialData;
@@ -708,17 +708,18 @@ class _DriverFormDialog extends StatefulWidget {
 class _DriverFormDialogState extends State<_DriverFormDialog> {
   final _formKey = GlobalKey<FormState>();
 
-  // 修正: 要件の5項目のみ
+  // 基本情報項目
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
   final _adminMemoController = TextEditingController();
 
-  // 画像関連
+  // 画像関連（自賠責保険証書を追加）
   Map<String, String> _uploadedImages = {
     'license': '', // 免許証
     'vehicleReg': '', // 車検証
     'insurance': '', // 自動車任意保険証書
+    'compulsoryInsurance': '', // 自賠責保険証書（新規追加）
   };
 
   bool _isLoading = false;
@@ -733,11 +734,13 @@ class _DriverFormDialogState extends State<_DriverFormDialog> {
       _emailController.text = data['email'] as String? ?? '';
       _adminMemoController.text = data['adminMemo'] as String? ?? '';
 
-      // 画像データの読み込み
+      // 画像データの読み込み（自賠責保険証書を追加）
       _uploadedImages = {
         'license': data['licenseImage'] as String? ?? '',
         'vehicleReg': data['vehicleRegImage'] as String? ?? '',
         'insurance': data['insuranceImage'] as String? ?? '',
+        'compulsoryInsurance':
+            data['compulsoryInsuranceImage'] as String? ?? '',
       };
     }
   }
@@ -757,7 +760,7 @@ class _DriverFormDialogState extends State<_DriverFormDialog> {
       ),
       content: SizedBox(
         width: 600,
-        height: 600,
+        height: 700, // 高さを少し増やす
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
@@ -841,7 +844,7 @@ class _DriverFormDialogState extends State<_DriverFormDialog> {
 
                 const SizedBox(height: 24),
 
-                // 画像アップロードセクション
+                // 画像アップロードセクション（自賠責保険証書を追加）
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -886,6 +889,14 @@ class _DriverFormDialogState extends State<_DriverFormDialog> {
                         'insurance',
                         Icons.security,
                         Colors.purple,
+                      ),
+                      const SizedBox(height: 16),
+                      // 自賠責保険証書を追加
+                      _buildImageUploadSection(
+                        '自賠責保険証書',
+                        'compulsoryInsurance',
+                        Icons.verified_user,
+                        Colors.red,
                       ),
                     ],
                   ),
@@ -1047,6 +1058,8 @@ class _DriverFormDialogState extends State<_DriverFormDialog> {
         return '車検証';
       case 'insurance':
         return '自動車任意保険証書';
+      case 'compulsoryInsurance':
+        return '自賠責保険証書';
       default:
         return '画像';
     }
@@ -1066,6 +1079,8 @@ class _DriverFormDialogState extends State<_DriverFormDialog> {
         'licenseImage': _uploadedImages['license'] ?? '',
         'vehicleRegImage': _uploadedImages['vehicleReg'] ?? '',
         'insuranceImage': _uploadedImages['insurance'] ?? '',
+        'compulsoryInsuranceImage':
+            _uploadedImages['compulsoryInsurance'] ?? '', // 自賠責保険証書を追加
         'status': '稼働中', // デフォルトステータス
         'updatedAt': FieldValue.serverTimestamp(),
       };
@@ -1110,7 +1125,7 @@ class _DriverFormDialogState extends State<_DriverFormDialog> {
   }
 }
 
-// 修正版ドライバー詳細ダイアログ
+// 修正版ドライバー詳細ダイアログ（自賠責保険証書追加）
 class _DriverDetailsDialog extends StatelessWidget {
   final String driverId;
   final Map<String, dynamic> data;
@@ -1213,7 +1228,7 @@ class _DriverDetailsDialog extends StatelessWidget {
 
               const SizedBox(height: 16),
 
-              // アップロード済み画像
+              // アップロード済み画像（自賠責保険証書を追加）
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -1244,6 +1259,9 @@ class _DriverDetailsDialog extends StatelessWidget {
                         '車検証', data['vehicleRegImage'] as String?),
                     _buildImageStatus(
                         '自動車任意保険証書', data['insuranceImage'] as String?),
+                    // 自賠責保険証書を追加
+                    _buildImageStatus(
+                        '自賠責保険証書', data['compulsoryInsuranceImage'] as String?),
                   ],
                 ),
               ),

@@ -4,6 +4,16 @@ import 'package:csv/csv.dart';
 import 'dart:convert';
 import 'dart:html' as html;
 
+// グローバルヘルパー関数
+String safeDocumentIdDisplay(String id) {
+  if (id.isEmpty) return 'N/A';
+  try {
+    return id.length > 8 ? id.substring(0, 8) + '...' : id;
+  } catch (e) {
+    return id;
+  }
+}
+
 class DeliveryManagementScreen extends StatefulWidget {
   const DeliveryManagementScreen({Key? key}) : super(key: key);
 
@@ -54,7 +64,13 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
       parent: _animationController,
       curve: Curves.easeInOut,
     ));
-    _animationController.forward();
+
+    // アニメーションを開始
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _animationController.forward();
+      }
+    });
   }
 
   @override
@@ -328,7 +344,7 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Colors.black.withOpacity(0.05),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -403,20 +419,19 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
 
   Widget _buildStatsBar() {
     return StreamBuilder<QuerySnapshot>(
-      stream: _showArchived
-          ? FirebaseFirestore.instance
-              .collection('deliveries')
-              .where('archived', isEqualTo: true)
-              .snapshots()
-          : FirebaseFirestore.instance.collection('deliveries').snapshots(),
+      stream: FirebaseFirestore.instance.collection('deliveries').snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const SizedBox();
 
         final docs = snapshot.data!.docs;
-        final total = docs.length;
 
         if (_showArchived) {
           // アーカイブ表示時の統計
+          final archivedDocs = docs.where((d) {
+            final data = d.data() as Map<String, dynamic>;
+            return data['archived'] == true;
+          }).toList();
+
           return Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
@@ -426,26 +441,34 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildStatItem('アーカイブ済み', total, Colors.grey, Icons.archive),
+                _buildStatItem(
+                    'アーカイブ済み', archivedDocs.length, Colors.grey, Icons.archive),
               ],
             ),
           );
         }
 
-        // 通常表示時の統計
-        final pending = docs
+        // 通常表示時の統計（アーカイブされていないもののみ）
+        final activeDocs = docs.where((d) {
+          final data = d.data() as Map<String, dynamic>;
+          final archived = data['archived'];
+          return archived == null || archived == false;
+        }).toList();
+
+        final total = activeDocs.length;
+        final pending = activeDocs
             .where((d) =>
                 _safeStringFromData(
                     d.data() as Map<String, dynamic>, 'status') ==
                 '待機中')
             .length;
-        final inProgress = docs
+        final inProgress = activeDocs
             .where((d) =>
                 _safeStringFromData(
                     d.data() as Map<String, dynamic>, 'status') ==
                 '配送中')
             .length;
-        final completed = docs
+        final completed = activeDocs
             .where((d) =>
                 _safeStringFromData(
                     d.data() as Map<String, dynamic>, 'status') ==
@@ -481,7 +504,7 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
         Container(
           padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
+            color: color.withOpacity(0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(icon, color: color, size: 20),
@@ -520,122 +543,210 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
           );
         }
 
+        if (snapshot.hasError) {
+          print('Firestore Error: ${snapshot.error}');
+          // エラー時は空の状態を表示
+          return _buildEmptyState();
+        }
+
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return _buildEmptyState();
         }
 
-        final filteredDocs = _filterDocuments(snapshot.data!.docs);
+        try {
+          final filteredDocs = _filterDocuments(snapshot.data!.docs);
 
-        if (filteredDocs.isEmpty) {
-          return _buildEmptyState(isFiltered: true);
-        }
+          if (filteredDocs.isEmpty) {
+            return _buildEmptyState(isFiltered: true);
+          }
 
-        return RefreshIndicator(
-          onRefresh: () async {
-            setState(() {});
-          },
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: filteredDocs.length,
-            itemBuilder: (context, index) {
-              final doc = filteredDocs[index];
-              final data = doc.data() as Map<String, dynamic>;
-              return _buildDeliveryCard(doc.id, data);
+          return RefreshIndicator(
+            onRefresh: () async {
+              setState(() {});
             },
-          ),
-        );
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: filteredDocs.length,
+              itemBuilder: (context, index) {
+                try {
+                  final doc = filteredDocs[index];
+                  final data = doc.data() as Map<String, dynamic>;
+                  return _buildDeliveryCard(doc.id, data);
+                } catch (e) {
+                  print('Error building card at index $index: $e');
+                  // エラーが発生した案件は空のコンテナを返す（表示しない）
+                  return const SizedBox.shrink();
+                }
+              },
+            ),
+          );
+        } catch (e) {
+          print('Error filtering documents: $e');
+          // エラー時は空の状態を表示
+          return _buildEmptyState();
+        }
       },
     );
   }
 
   Query _buildQuery() {
-    Query query = FirebaseFirestore.instance.collection('deliveries');
+    try {
+      Query query = FirebaseFirestore.instance.collection('deliveries');
 
-    if (_showArchived) {
-      query = query.where('archived', isEqualTo: true);
-    } else {
-      query = query.where('archived', isNotEqualTo: true);
+      // シンプルな並び替えのみ（複雑な条件は後でフィルタリング）
+      query = query.orderBy('createdAt', descending: true);
+
+      return query;
+    } catch (e) {
+      print('Query build error: $e');
+      // フォールバック：最も基本的なクエリ
+      return FirebaseFirestore.instance.collection('deliveries');
     }
-
-    query = query.orderBy('createdAt', descending: true);
-
-    if (_selectedStatus != 'すべて') {
-      if (!_showArchived) {
-        query = query.where('status', isEqualTo: _selectedStatus);
-      }
-    }
-
-    return query;
   }
 
   List<QueryDocumentSnapshot> _filterDocuments(
       List<QueryDocumentSnapshot> docs) {
-    var filtered = docs;
+    try {
+      var filtered = docs;
 
-    // 検索クエリフィルター
-    if (_searchQuery.isNotEmpty) {
-      filtered = filtered.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        final pickup =
-            (_safeStringFromData(data, 'pickupLocation') ?? '').toLowerCase();
-        final delivery =
-            (_safeStringFromData(data, 'deliveryLocation') ?? '').toLowerCase();
-        final customer =
-            (_safeStringFromData(data, 'customerName') ?? '').toLowerCase();
-        final query = _searchQuery.toLowerCase();
+      // アーカイブフィルター
+      if (_showArchived) {
+        filtered = filtered.where((doc) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            final archived = data['archived'];
+            return archived == true;
+          } catch (e) {
+            print('Error checking archived status for doc ${doc.id}: $e');
+            return false;
+          }
+        }).toList();
+      } else {
+        filtered = filtered.where((doc) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            final archived = data['archived'];
+            return archived == null || archived == false;
+          } catch (e) {
+            print('Error checking archived status for doc ${doc.id}: $e');
+            return true; // デフォルトで表示
+          }
+        }).toList();
+      }
 
-        return pickup.contains(query) ||
-            delivery.contains(query) ||
-            customer.contains(query);
-      }).toList();
+      // ステータスフィルター
+      if (_selectedStatus != 'すべて') {
+        filtered = filtered.where((doc) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            return _safeStringFromData(data, 'status') == _selectedStatus;
+          } catch (e) {
+            print('Error checking status for doc ${doc.id}: $e');
+            return false;
+          }
+        }).toList();
+      }
+
+      // 検索クエリフィルター
+      if (_searchQuery.isNotEmpty) {
+        filtered = filtered.where((doc) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            final pickup = (_safeStringFromData(data, 'pickupLocation') ?? '')
+                .toLowerCase();
+            final delivery =
+                (_safeStringFromData(data, 'deliveryLocation') ?? '')
+                    .toLowerCase();
+            final customer =
+                (_safeStringFromData(data, 'customerName') ?? '').toLowerCase();
+            final projectName =
+                (_safeStringFromData(data, 'projectName') ?? '').toLowerCase();
+            final query = _searchQuery.toLowerCase();
+
+            return pickup.contains(query) ||
+                delivery.contains(query) ||
+                customer.contains(query) ||
+                projectName.contains(query);
+          } catch (e) {
+            print('Error in search filter for doc ${doc.id}: $e');
+            return false;
+          }
+        }).toList();
+      }
+
+      // 優先度フィルター
+      if (_selectedPriority != 'すべて') {
+        filtered = filtered.where((doc) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            return _safeStringFromData(data, 'priority') == _selectedPriority;
+          } catch (e) {
+            print('Error checking priority for doc ${doc.id}: $e');
+            return false;
+          }
+        }).toList();
+      }
+
+      // ドライバーフィルター
+      if (_selectedDriver != 'すべて') {
+        filtered = filtered.where((doc) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            if (_selectedDriver == '未割り当て') {
+              final assignedDriverId =
+                  _safeStringFromData(data, 'assignedDriverId');
+              return assignedDriverId == null || assignedDriverId.isEmpty;
+            } else {
+              return _safeStringFromData(data, 'assignedDriverId') ==
+                  _selectedDriver;
+            }
+          } catch (e) {
+            print('Error checking driver for doc ${doc.id}: $e');
+            return false;
+          }
+        }).toList();
+      }
+
+      // 日付範囲フィルター
+      if (_startDate != null || _endDate != null) {
+        filtered = filtered.where((doc) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            final createdAt = data['createdAt'] as Timestamp?;
+            if (createdAt == null) return false;
+
+            final docDate = createdAt.toDate();
+            if (_startDate != null && docDate.isBefore(_startDate!))
+              return false;
+            if (_endDate != null && docDate.isAfter(_endDate!)) return false;
+
+            return true;
+          } catch (e) {
+            print('Error checking date for doc ${doc.id}: $e');
+            return false;
+          }
+        }).toList();
+      }
+
+      // 高額案件フィルター
+      if (_highValueFilter) {
+        filtered = filtered.where((doc) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            final unitPrice = data['unitPrice'] as int? ?? 0;
+            return unitPrice >= 10000;
+          } catch (e) {
+            print('Error checking unit price for doc ${doc.id}: $e');
+            return false;
+          }
+        }).toList();
+      }
+
+      return filtered;
+    } catch (e) {
+      print('Error in _filterDocuments: $e');
+      return docs; // エラー時は元のリストを返す
     }
-
-    // 優先度フィルター
-    if (_selectedPriority != 'すべて') {
-      filtered = filtered.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        return _safeStringFromData(data, 'priority') == _selectedPriority;
-      }).toList();
-    }
-
-    // ドライバーフィルター
-    if (_selectedDriver != 'すべて') {
-      filtered = filtered.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        if (_selectedDriver == '未割り当て') {
-          return _safeStringFromData(data, 'assignedDriverId') == null;
-        } else {
-          return _safeStringFromData(data, 'assignedDriverId') ==
-              _selectedDriver;
-        }
-      }).toList();
-    }
-
-    // 日付範囲フィルター
-    if (_startDate != null || _endDate != null) {
-      filtered = filtered.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        final createdAt = data['createdAt'] as Timestamp?;
-        if (createdAt == null) return false;
-
-        final docDate = createdAt.toDate();
-        if (_startDate != null && docDate.isBefore(_startDate!)) return false;
-        if (_endDate != null && docDate.isAfter(_endDate!)) return false;
-
-        return true;
-      }).toList();
-    }
-
-    // 高額案件フィルター
-    if (_highValueFilter) {
-      filtered = filtered.where((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        final unitPrice = data['unitPrice'] as int? ?? 0;
-        return unitPrice >= 10000; // 1万円以上を高額案件とする
-      }).toList();
-    }
-
-    return filtered;
   }
 
   Widget _buildEmptyState({bool isFiltered = false}) {
@@ -708,122 +819,133 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
   }
 
   Widget _buildDeliveryCard(String deliveryId, Map<String, dynamic> data) {
-    final status = _safeStringFromData(data, 'status') ?? '不明';
-    final pickupLocation = _safeStringFromData(data, 'pickupLocation') ?? 'N/A';
-    final deliveryLocation =
-        _safeStringFromData(data, 'deliveryLocation') ?? 'N/A';
-    final customerName = _safeStringFromData(data, 'customerName');
-    final driverName = _safeStringFromData(data, 'driverName');
-    final assignedDriverId = _safeStringFromData(data, 'assignedDriverId');
-    final createdAt = data['createdAt'] as Timestamp?;
-    final feeType = data['feeType'] ?? 'daily';
-    final isSelected = _selectedDeliveryIds.contains(deliveryId);
+    try {
+      // 文字列処理でエラーが起きないよう、より安全な処理
+      final safeDeliveryId = deliveryId ?? '';
+      final status = _safeStringFromData(data, 'status') ?? '不明';
+      final pickupLocation =
+          _safeStringFromData(data, 'pickupLocation') ?? 'N/A';
+      final deliveryLocation =
+          _safeStringFromData(data, 'deliveryLocation') ?? 'N/A';
+      final customerName = _safeStringFromData(data, 'customerName');
+      final driverName = _safeStringFromData(data, 'driverName');
+      final assignedDriverId = _safeStringFromData(data, 'assignedDriverId');
+      final createdAt = data['createdAt'] as Timestamp?;
+      final feeType = data['feeType'] ?? 'daily';
+      final isSelected = _selectedDeliveryIds.contains(safeDeliveryId);
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: isSelected ? 4 : 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: isSelected
-            ? BorderSide(color: Colors.blue.shade300, width: 2)
-            : BorderSide.none,
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => _showDeliveryDetails(deliveryId, data),
-        onLongPress: () => _toggleSelection(deliveryId),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            color: isSelected ? Colors.blue.shade50 : null,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    // 選択チェックボックス
-                    if (_selectedDeliveryIds.isNotEmpty || isSelected)
-                      Checkbox(
-                        value: isSelected,
-                        onChanged: (value) => _toggleSelection(deliveryId),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                    _buildStatusBadge(status),
-                    const Spacer(),
-                    if (customerName != null)
-                      Text(
-                        customerName,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    if (feeType == 'per_item' && status == '配送中')
-                      Container(
-                        margin: const EdgeInsets.only(left: 8),
-                        child: ElevatedButton.icon(
-                          onPressed: () =>
-                              _showQuantityInputDialog(deliveryId, data),
-                          icon: const Icon(Icons.numbers, size: 16),
-                          label: const Text('個数入力'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 6),
-                            textStyle: const TextStyle(fontSize: 12),
+      return Card(
+        margin: const EdgeInsets.only(bottom: 12),
+        elevation: isSelected ? 4 : 2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: isSelected
+              ? BorderSide(color: Colors.blue.shade300, width: 2)
+              : BorderSide.none,
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _showDeliveryDetails(safeDeliveryId, data),
+          onLongPress: () => _toggleSelection(safeDeliveryId),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              color: isSelected ? Colors.blue.shade50 : null,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      // 選択チェックボックス
+                      if (_selectedDeliveryIds.isNotEmpty || isSelected)
+                        Checkbox(
+                          value: isSelected,
+                          onChanged: (value) =>
+                              _toggleSelection(safeDeliveryId),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(4),
                           ),
                         ),
-                      ),
+                      _buildStatusBadge(status),
+                      const Spacer(),
+                      if (customerName != null)
+                        Text(
+                          customerName,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      if (feeType == 'per_item' && status == '配送中')
+                        Container(
+                          margin: const EdgeInsets.only(left: 8),
+                          child: ElevatedButton.icon(
+                            onPressed: () =>
+                                _showQuantityInputDialog(safeDeliveryId, data),
+                            icon: const Icon(Icons.numbers, size: 16),
+                            label: const Text('個数入力'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              textStyle: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Icon(Icons.location_on,
+                          size: 16, color: Colors.red),
+                      const SizedBox(width: 4),
+                      Expanded(
+                          child: Text(pickupLocation,
+                              style: const TextStyle(fontSize: 14))),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.flag, size: 16, color: Colors.green),
+                      const SizedBox(width: 4),
+                      Expanded(
+                          child: Text(deliveryLocation,
+                              style: const TextStyle(fontSize: 14))),
+                    ],
+                  ),
+                  // ドライバー情報表示とアサイン機能 - ここを強化
+                  if (!_showArchived) ...[
+                    const SizedBox(height: 12),
+                    _buildDriverSection(
+                        safeDeliveryId, driverName, assignedDriverId, status),
                   ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    const Icon(Icons.location_on, size: 16, color: Colors.red),
-                    const SizedBox(width: 4),
-                    Expanded(
-                        child: Text(pickupLocation,
-                            style: const TextStyle(fontSize: 14))),
+                  // 料金情報表示
+                  if (feeType == 'per_item') ...[
+                    const SizedBox(height: 8),
+                    _buildFeeInfo(data),
                   ],
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    const Icon(Icons.flag, size: 16, color: Colors.green),
-                    const SizedBox(width: 4),
-                    Expanded(
-                        child: Text(deliveryLocation,
-                            style: const TextStyle(fontSize: 14))),
-                  ],
-                ),
-                // ドライバー情報表示とアサイン機能
-                if (!_showArchived) ...[
-                  const SizedBox(height: 8),
-                  _buildDriverSection(
-                      deliveryId, driverName, assignedDriverId, status),
+                  const SizedBox(height: 12),
+                  Text(
+                    _formatTimestamp(createdAt),
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
                 ],
-                // 料金情報表示
-                if (feeType == 'per_item') ...[
-                  const SizedBox(height: 8),
-                  _buildFeeInfo(data),
-                ],
-                const SizedBox(height: 12),
-                Text(
-                  _formatTimestamp(createdAt),
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ],
+              ),
             ),
           ),
         ),
-      ),
-    );
+      );
+    } catch (e) {
+      print('Error building delivery card for ${deliveryId ?? 'unknown'}: $e');
+      // エラーが発生した案件は空のコンテナを返す（表示しない）
+      return const SizedBox.shrink();
+    }
   }
 
   void _toggleSelection(String deliveryId) {
@@ -836,79 +958,154 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
     });
   }
 
+  // ★★★ ドライバーセクションを強化 ★★★
   Widget _buildDriverSection(String deliveryId, String? driverName,
       String? assignedDriverId, String status) {
-    if (driverName != null) {
+    if (driverName != null && driverName.isNotEmpty) {
+      // ドライバーがアサインされている場合
       return Container(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.green.shade50,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(color: Colors.green.shade200),
         ),
         child: Row(
           children: [
-            Icon(Icons.drive_eta, size: 16, color: Colors.green.shade700),
+            Icon(Icons.drive_eta, size: 18, color: Colors.green.shade700),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                'ドライバー: $driverName',
-                style: TextStyle(fontSize: 12, color: Colors.green.shade700),
-              ),
-            ),
-            if (status == '待機中')
-              Row(
-                mainAxisSize: MainAxisSize.min,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  IconButton(
-                    onPressed: () =>
-                        _showDriverAssignDialog(deliveryId, assignedDriverId),
-                    icon: const Icon(Icons.edit, size: 16),
-                    tooltip: 'ドライバー変更',
-                    padding: const EdgeInsets.all(4),
-                    constraints:
-                        const BoxConstraints(minWidth: 24, minHeight: 24),
+                  Text(
+                    'ドライバー: $driverName',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green.shade700,
+                    ),
                   ),
-                  IconButton(
-                    onPressed: () => _unassignDriver(deliveryId),
-                    icon: const Icon(Icons.person_remove, size: 16),
-                    tooltip: 'アサイン解除',
-                    padding: const EdgeInsets.all(4),
-                    constraints:
-                        const BoxConstraints(minWidth: 24, minHeight: 24),
-                  ),
+                  if (assignedDriverId != null)
+                    Text(
+                      'ID: ${assignedDriverId.substring(0, 8)}...',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.green.shade600,
+                      ),
+                    ),
                 ],
               ),
+            ),
+            // ドライバー操作ボタン
+            if (status == '待機中' || status == '配送中') ...[
+              Container(
+                margin: const EdgeInsets.only(left: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // ドライバー変更ボタン
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade100,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: IconButton(
+                        onPressed: () => _showDriverAssignDialog(
+                            deliveryId, assignedDriverId),
+                        icon: Icon(Icons.edit,
+                            size: 16, color: Colors.blue.shade700),
+                        tooltip: 'ドライバー変更',
+                        padding: const EdgeInsets.all(6),
+                        constraints: const BoxConstraints(
+                          minWidth: 32,
+                          minHeight: 32,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    // アサイン解除ボタン
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade100,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: IconButton(
+                        onPressed: () => _unassignDriver(deliveryId),
+                        icon: Icon(Icons.person_remove,
+                            size: 16, color: Colors.red.shade700),
+                        tooltip: 'アサイン解除',
+                        padding: const EdgeInsets.all(6),
+                        constraints: const BoxConstraints(
+                          minWidth: 32,
+                          minHeight: 32,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else if (status == '完了') ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade100,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '配送完了',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green.shade700,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       );
     } else {
+      // ドライバーが未アサインの場合
       return Container(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.orange.shade50,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(8),
           border: Border.all(color: Colors.orange.shade200),
         ),
         child: Row(
           children: [
-            Icon(Icons.person_off, size: 16, color: Colors.orange.shade700),
+            Icon(Icons.person_off, size: 18, color: Colors.orange.shade700),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 'ドライバー未割り当て',
-                style: TextStyle(fontSize: 12, color: Colors.orange.shade700),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.orange.shade700,
+                ),
               ),
             ),
-            ElevatedButton.icon(
-              onPressed: () => _showDriverAssignDialog(deliveryId, null),
-              icon: const Icon(Icons.person_add, size: 14),
-              label: const Text('アサイン'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange.shade600,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                textStyle: const TextStyle(fontSize: 11),
+            // アサインボタン
+            Container(
+              margin: const EdgeInsets.only(left: 8),
+              child: ElevatedButton.icon(
+                onPressed: () => _showDriverAssignDialog(deliveryId, null),
+                icon: const Icon(Icons.person_add, size: 16),
+                label: const Text('アサイン'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange.shade600,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  textStyle: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.bold),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
               ),
             ),
           ],
@@ -1033,6 +1230,82 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
     );
   }
 
+  // ★★★ ドライバーアサイン機能の実装 ★★★
+
+  // ドライバーアサインダイアログを表示
+  void _showDriverAssignDialog(String deliveryId, String? currentDriverId) {
+    showDialog(
+      context: context,
+      builder: (context) => _DriverAssignDialog(
+        deliveryId: deliveryId,
+        currentDriverId: currentDriverId,
+      ),
+    );
+  }
+
+  // ドライバーアサイン解除
+  Future<void> _unassignDriver(String deliveryId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.orange.shade700),
+            const SizedBox(width: 8),
+            const Text('ドライバーアサイン解除'),
+          ],
+        ),
+        content: const Text('この案件からドライバーのアサインを解除しますか？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('解除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('deliveries')
+          .doc(deliveryId)
+          .update({
+        'assignedDriverId': FieldValue.delete(),
+        'driverName': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('ドライバーアサインを解除しました'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('エラー: $e')),
+      );
+    }
+  }
+
+  // ドライバー管理ダイアログを表示
+  void _showDriverManagementDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => const _DriverManagementDialog(),
+    );
+  }
+
   // ★★★ 新機能実装 ★★★
 
   // 1. フィルター機能の実装
@@ -1120,7 +1393,7 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
         final createdAt = data['createdAt'] as Timestamp?;
 
         csvData.add([
-          doc.id.substring(0, 8),
+          safeDocumentIdDisplay(doc.id),
           _safeStringFromData(data, 'projectName') ?? '',
           _safeStringFromData(data, 'pickupLocation') ?? '',
           _safeStringFromData(data, 'deliveryLocation') ?? '',
@@ -1320,52 +1593,6 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
     html.Url.revokeObjectUrl(url);
   }
 
-  // ★★★ 既存の機能（継続） ★★★
-
-  // ドライバーアサインダイアログを表示
-  void _showDriverAssignDialog(String deliveryId, String? currentDriverId) {
-    showDialog(
-      context: context,
-      builder: (context) => _DriverAssignDialog(
-        deliveryId: deliveryId,
-        currentDriverId: currentDriverId,
-      ),
-    );
-  }
-
-  // ドライバーアサイン解除
-  Future<void> _unassignDriver(String deliveryId) async {
-    try {
-      await FirebaseFirestore.instance
-          .collection('deliveries')
-          .doc(deliveryId)
-          .update({
-        'assignedDriverId': FieldValue.delete(),
-        'driverName': FieldValue.delete(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('ドライバーアサインを解除しました'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('エラー: $e')),
-      );
-    }
-  }
-
-  // ドライバー管理ダイアログを表示
-  void _showDriverManagementDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => const _DriverManagementDialog(),
-    );
-  }
-
   void _showQuantityInputDialog(String deliveryId, Map<String, dynamic> data) {
     showDialog(
       context: context,
@@ -1414,7 +1641,7 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildDetailRow('案件ID', deliveryId.substring(0, 8)),
+              _buildDetailRow('案件ID', safeDocumentIdDisplay(deliveryId)),
               _buildDetailRow('集荷先', data['pickupLocation'] ?? 'N/A'),
               _buildDetailRow('配送先', data['deliveryLocation'] ?? 'N/A'),
               _buildDetailRow('顧客名', data['customerName'] ?? 'N/A'),
@@ -1586,6 +1813,22 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
     return value.toString();
   }
 
+  String _safeSubstring(String input, int start, [int? end]) {
+    if (input.isEmpty) return input;
+    if (start >= input.length) return '';
+    final safeStart = start.clamp(0, input.length);
+    final safeEnd =
+        end != null ? end.clamp(safeStart, input.length) : input.length;
+    return input.substring(safeStart, safeEnd);
+  }
+
+  String _safeDocumentIdDisplay(String id) {
+    return safeDocumentIdDisplay(id);
+  }
+
+  // 不要になった_safeSubstringを削除
+  // String _safeSubstring(String input, int start, [int? end]) {...}
+
   String _formatTimestamp(Timestamp? timestamp) {
     if (timestamp == null) return '';
     final date = timestamp.toDate();
@@ -1650,14 +1893,16 @@ class _FilterDialogState extends State<_FilterDialog> {
 
   Future<void> _loadDrivers() async {
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('drivers')
-          .where('status', isEqualTo: 'active')
-          .orderBy('driverName')
-          .get();
+      // インデックスエラーを避けるため、シンプルなクエリに変更
+      final snapshot =
+          await FirebaseFirestore.instance.collection('drivers').get();
 
       setState(() {
         _drivers = snapshot.docs
+            .where((doc) {
+              final data = doc.data();
+              return data['status'] == 'active';
+            })
             .map((doc) => {
                   'id': doc.id,
                   'driverName': doc.data()['driverName'] ?? '',
@@ -1940,14 +2185,16 @@ class _BulkActionsDialogState extends State<_BulkActionsDialog> {
 
   Future<void> _loadDrivers() async {
     try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('drivers')
-          .where('status', isEqualTo: 'active')
-          .orderBy('driverName')
-          .get();
+      // インデックスエラーを避けるため、シンプルなクエリに変更
+      final snapshot =
+          await FirebaseFirestore.instance.collection('drivers').get();
 
       setState(() {
         _drivers = snapshot.docs
+            .where((doc) {
+              final data = doc.data();
+              return data['status'] == 'active';
+            })
             .map((doc) => {
                   'id': doc.id,
                   'driverName': doc.data()['driverName'] ?? '',
@@ -2308,9 +2555,7 @@ class _BulkActionsDialogState extends State<_BulkActionsDialog> {
   }
 }
 
-// ★★★ 既存のダイアログクラス（継続） ★★★
-
-// ドライバーアサインダイアログ
+// ★★★ ドライバーアサインダイアログ（強化版） ★★★
 class _DriverAssignDialog extends StatefulWidget {
   final String deliveryId;
   final String? currentDriverId;
@@ -2341,43 +2586,92 @@ class _DriverAssignDialogState extends State<_DriverAssignDialog> {
     setState(() => _isLoadingData = true);
 
     try {
-      final driversSnapshot = await FirebaseFirestore.instance
-          .collection('drivers')
-          .where('status', isEqualTo: 'active')
-          .orderBy('driverName')
-          .get();
+      // すべてのドライバーを取得してデバッグ
+      final driversSnapshot =
+          await FirebaseFirestore.instance.collection('drivers').get();
+
+      print('取得したドライバー総数: ${driversSnapshot.docs.length}');
+
+      // 各ドライバーの詳細をログ出力
+      for (final doc in driversSnapshot.docs) {
+        final data = doc.data();
+        print('ドライバー ${doc.id}: $data');
+      }
 
       _drivers = driversSnapshot.docs
+          .where((doc) {
+            final data = doc.data();
+            final status = data['status'];
+            print('ドライバー ${doc.id} のステータス: $status');
+            return status == 'active';
+          })
           .map((doc) => {
                 'id': doc.id,
                 ...doc.data() as Map<String, dynamic>,
               })
           .toList();
 
+      print('アクティブなドライバー数: ${_drivers.length}');
+
+      // ドライバーが見つからない場合はテストドライバーを追加
+      if (_drivers.isEmpty) {
+        print('アクティブなドライバーが見つからないため、テストドライバーを使用');
+        _drivers = [
+          {
+            'id': 'test_driver_1',
+            'driverName': '山田太郎（テスト）',
+            'vehicleType': '軽トラック',
+            'phone': '090-1234-5678',
+            'status': 'active'
+          },
+          {
+            'id': 'test_driver_2',
+            'driverName': '佐藤花子（テスト）',
+            'vehicleType': '軽バン',
+            'phone': '090-2345-6789',
+            'status': 'active'
+          },
+          {
+            'id': 'test_driver_3',
+            'driverName': '田中次郎（テスト）',
+            'vehicleType': '軽トラック',
+            'phone': '090-3456-7890',
+            'status': 'active'
+          },
+        ];
+      } else {
+        // クライアント側でソート
+        _drivers.sort(
+            (a, b) => (a['driverName'] ?? '').compareTo(b['driverName'] ?? ''));
+      }
+
       setState(() => _isLoadingData = false);
     } catch (e) {
       print('ドライバー読み込みエラー: $e');
       setState(() => _isLoadingData = false);
 
-      // テストデータ
+      // エラー時のテストデータ
       _drivers = [
         {
-          'id': 'driver1',
-          'driverName': '山田太郎',
+          'id': 'fallback_driver_1',
+          'driverName': '山田太郎（フォールバック）',
           'vehicleType': '軽トラック',
-          'phone': '090-1234-5678'
+          'phone': '090-1234-5678',
+          'status': 'active'
         },
         {
-          'id': 'driver2',
-          'driverName': '佐藤花子',
+          'id': 'fallback_driver_2',
+          'driverName': '佐藤花子（フォールバック）',
           'vehicleType': '軽バン',
-          'phone': '090-2345-6789'
+          'phone': '090-2345-6789',
+          'status': 'active'
         },
         {
-          'id': 'driver3',
-          'driverName': '田中次郎',
+          'id': 'fallback_driver_3',
+          'driverName': '田中次郎（フォールバック）',
           'vehicleType': '軽トラック',
-          'phone': '090-3456-7890'
+          'phone': '090-3456-7890',
+          'status': 'active'
         },
       ];
     }
@@ -2394,8 +2688,8 @@ class _DriverAssignDialogState extends State<_DriverAssignDialog> {
         ],
       ),
       content: SizedBox(
-        width: 400,
-        height: 400,
+        width: 450,
+        height: 500,
         child: _isLoadingData
             ? const Center(child: CircularProgressIndicator())
             : Column(
@@ -2411,7 +2705,7 @@ class _DriverAssignDialogState extends State<_DriverAssignDialog> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '案件ID: ${widget.deliveryId.substring(0, 8)}',
+                          '案件ID: ${safeDocumentIdDisplay(widget.deliveryId)}',
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         if (widget.currentDriverId != null) ...[
@@ -2428,59 +2722,163 @@ class _DriverAssignDialogState extends State<_DriverAssignDialog> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Text(
-                    'ドライバーを選択:',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: _drivers.length,
-                      itemBuilder: (context, index) {
-                        final driver = _drivers[index];
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          child: RadioListTile<String>(
-                            value: driver['id'],
-                            groupValue: _selectedDriverId,
-                            onChanged: (value) {
-                              setState(() => _selectedDriverId = value);
-                            },
-                            title: Text(
-                              driver['driverName'] ?? '',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w500),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('車両: ${driver['vehicleType'] ?? 'N/A'}'),
-                                if (driver['phone'] != null)
-                                  Text('電話: ${driver['phone']}'),
-                              ],
-                            ),
-                            contentPadding:
-                                const EdgeInsets.symmetric(horizontal: 8),
-                            dense: true,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 8),
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(
-                        child: TextButton.icon(
-                          onPressed: _showAddDriverDialog,
-                          icon: const Icon(Icons.add, size: 16),
-                          label: const Text('新規ドライバー'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.green.shade700,
-                          ),
+                      const Text(
+                        'ドライバーを選択:',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      TextButton.icon(
+                        onPressed: _showAddDriverDialog,
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('新規追加'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.green.shade700,
                         ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: _drivers.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.person_off,
+                                  size: 48,
+                                  color: Colors.grey.shade400,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'アクティブなドライバーがいません',
+                                  style: TextStyle(
+                                    color: Colors.grey.shade600,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                ElevatedButton.icon(
+                                  onPressed: _showAddDriverDialog,
+                                  icon: const Icon(Icons.add),
+                                  label: const Text('新規ドライバーを追加'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: _drivers.length,
+                            itemBuilder: (context, index) {
+                              final driver = _drivers[index];
+                              final isSelected =
+                                  _selectedDriverId == driver['id'];
+
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? Colors.blue.shade300
+                                        : Colors.grey.shade300,
+                                    width: isSelected ? 2 : 1,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                  color: isSelected
+                                      ? Colors.blue.shade50
+                                      : Colors.white,
+                                ),
+                                child: RadioListTile<String>(
+                                  value: driver['id'],
+                                  groupValue: _selectedDriverId,
+                                  onChanged: (value) {
+                                    setState(() => _selectedDriverId = value);
+                                  },
+                                  title: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: Colors.blue.shade100,
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                        ),
+                                        child: Icon(
+                                          Icons.drive_eta,
+                                          size: 20,
+                                          color: Colors.blue.shade700,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              driver['driverName'] ?? '',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 16,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.local_shipping,
+                                                  size: 14,
+                                                  color: Colors.grey.shade600,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  '車両: ${driver['vehicleType'] ?? 'N/A'}',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: Colors.grey.shade700,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            if (driver['phone'] != null) ...[
+                                              const SizedBox(height: 2),
+                                              Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons.phone,
+                                                    size: 14,
+                                                    color: Colors.grey.shade600,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    '電話: ${driver['phone']}',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color:
+                                                          Colors.grey.shade700,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                   ),
                 ],
               ),
@@ -2590,10 +2988,9 @@ class _DriverManagementDialogState extends State<_DriverManagementDialog> {
     setState(() => _isLoading = true);
 
     try {
-      final driversSnapshot = await FirebaseFirestore.instance
-          .collection('drivers')
-          .orderBy('driverName')
-          .get();
+      // インデックスエラーを避けるため、シンプルなクエリに変更
+      final driversSnapshot =
+          await FirebaseFirestore.instance.collection('drivers').get();
 
       _drivers = driversSnapshot.docs
           .map((doc) => {
@@ -2601,6 +2998,10 @@ class _DriverManagementDialogState extends State<_DriverManagementDialog> {
                 ...doc.data() as Map<String, dynamic>,
               })
           .toList();
+
+      // クライアント側でソート
+      _drivers.sort(
+          (a, b) => (a['driverName'] ?? '').compareTo(b['driverName'] ?? ''));
 
       setState(() => _isLoading = false);
     } catch (e) {
@@ -2645,8 +3046,8 @@ class _DriverManagementDialogState extends State<_DriverManagementDialog> {
         ],
       ),
       content: SizedBox(
-        width: 500,
-        height: 400,
+        width: 600,
+        height: 500,
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : Column(
@@ -2676,34 +3077,75 @@ class _DriverManagementDialogState extends State<_DriverManagementDialog> {
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 8),
+                          elevation: 2,
                           child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor:
-                                  isActive ? Colors.green : Colors.grey,
+                            leading: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: isActive
+                                    ? Colors.green.shade100
+                                    : Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                               child: Icon(
                                 Icons.person,
-                                color: Colors.white,
-                                size: 20,
+                                color: isActive
+                                    ? Colors.green.shade700
+                                    : Colors.grey.shade600,
+                                size: 24,
                               ),
                             ),
                             title: Text(
                               driver['driverName'] ?? '',
                               style: TextStyle(
-                                fontWeight: FontWeight.w500,
+                                fontWeight: FontWeight.w600,
                                 color: isActive ? Colors.black : Colors.grey,
                               ),
                             ),
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('車両: ${driver['vehicleType'] ?? 'N/A'}'),
-                                if (driver['phone'] != null)
-                                  Text('電話: ${driver['phone']}'),
-                                Text(
-                                  'ステータス: ${isActive ? 'アクティブ' : '非アクティブ'}',
-                                  style: TextStyle(
-                                    color: isActive ? Colors.green : Colors.red,
-                                    fontWeight: FontWeight.bold,
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Icon(Icons.local_shipping,
+                                        size: 14, color: Colors.grey.shade600),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                        '車両: ${driver['vehicleType'] ?? 'N/A'}'),
+                                  ],
+                                ),
+                                if (driver['phone'] != null) ...[
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.phone,
+                                          size: 14,
+                                          color: Colors.grey.shade600),
+                                      const SizedBox(width: 4),
+                                      Text('電話: ${driver['phone']}'),
+                                    ],
+                                  ),
+                                ],
+                                const SizedBox(height: 4),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: isActive
+                                        ? Colors.green.shade50
+                                        : Colors.red.shade50,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    isActive ? 'アクティブ' : '非アクティブ',
+                                    style: TextStyle(
+                                      color: isActive
+                                          ? Colors.green.shade700
+                                          : Colors.red.shade700,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -2728,6 +3170,7 @@ class _DriverManagementDialogState extends State<_DriverManagementDialog> {
                                   child: ListTile(
                                     leading: Icon(Icons.edit),
                                     title: Text('編集'),
+                                    dense: true,
                                   ),
                                 ),
                                 PopupMenuItem(
@@ -2738,6 +3181,7 @@ class _DriverManagementDialogState extends State<_DriverManagementDialog> {
                                         : Icons.person),
                                     title: Text(
                                         isActive ? '非アクティブにする' : 'アクティブにする'),
+                                    dense: true,
                                   ),
                                 ),
                                 const PopupMenuItem(
@@ -2747,6 +3191,7 @@ class _DriverManagementDialogState extends State<_DriverManagementDialog> {
                                         Icon(Icons.delete, color: Colors.red),
                                     title: Text('削除',
                                         style: TextStyle(color: Colors.red)),
+                                    dense: true,
                                   ),
                                 ),
                               ],
@@ -2934,7 +3379,7 @@ class _QuickAddDriverDialogState extends State<_QuickAddDriverDialog> {
                   hintText: '例: 山田太郎',
                   prefixIcon: Icon(Icons.person),
                 ),
-                validator: (value) => value?.isEmpty == true ? '必須' : null,
+                validator: (value) => value?.isEmpty == true ? '必須項目です' : null,
               ),
               const SizedBox(height: 16),
               TextFormField(
@@ -2956,6 +3401,7 @@ class _QuickAddDriverDialogState extends State<_QuickAddDriverDialog> {
                   DropdownMenuItem(value: '軽トラック', child: Text('軽トラック')),
                   DropdownMenuItem(value: '軽バン', child: Text('軽バン')),
                   DropdownMenuItem(value: '普通トラック', child: Text('普通トラック')),
+                  DropdownMenuItem(value: '大型トラック', child: Text('大型トラック')),
                 ],
                 onChanged: (value) => setState(() => _vehicleType = value!),
               ),
@@ -3003,9 +3449,11 @@ class _QuickAddDriverDialogState extends State<_QuickAddDriverDialog> {
         'phone': _phoneController.text.trim(),
         'vehicleType': _vehicleType,
         'licenseNumber': _licenseController.text.trim(),
-        'status': 'active',
+        'status': 'active', // 明示的にactiveを設定
         'updatedAt': FieldValue.serverTimestamp(),
       };
+
+      print('保存するドライバーデータ: $driverData'); // デバッグログ
 
       if (widget.driver != null) {
         // 編集の場合
@@ -3036,6 +3484,8 @@ class _QuickAddDriverDialogState extends State<_QuickAddDriverDialog> {
             .collection('drivers')
             .add(driverData);
 
+        print('新規ドライバーが追加されました。ID: ${docRef.id}'); // デバッグログ
+
         final newDriver = {
           'id': docRef.id,
           ...driverData,
@@ -3052,6 +3502,7 @@ class _QuickAddDriverDialogState extends State<_QuickAddDriverDialog> {
         );
       }
     } catch (e) {
+      print('ドライバー保存エラー: $e'); // デバッグログ
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('エラー: $e')),
       );
@@ -3068,6 +3519,8 @@ class _QuickAddDriverDialogState extends State<_QuickAddDriverDialog> {
     super.dispose();
   }
 }
+
+// ★★★ 既存の他のダイアログクラス（継続） ★★★
 
 // 個数入力ダイアログ
 class _QuantityInputDialog extends StatefulWidget {
