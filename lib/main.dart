@@ -47,7 +47,20 @@ class MyApp extends StatelessWidget {
             delivery.DeliveryManagementScreen(),
         '/driver-management': (context) => driver.DriverManagementScreen(),
         '/driver-app': (context) => DriverDashboardScreen(),
-        '/sales-management': (context) => SalesManagementUnifiedScreen(), // 追加
+        '/sales-management': (context) => SalesManagementUnifiedScreen(),
+
+        // 不足していたルートを追加
+        '/advanced-reports': (context) => _PlaceholderScreen(title: 'レポート'),
+        '/reports': (context) => _PlaceholderScreen(title: 'レポート'),
+        '/settings': (context) => _PlaceholderScreen(title: 'システム設定'),
+        '/system-settings': (context) => _PlaceholderScreen(title: 'システム設定'),
+        '/data-management': (context) => _PlaceholderScreen(title: 'データ管理'),
+        '/data-export': (context) => _PlaceholderScreen(title: 'データエクスポート'),
+        '/data-import': (context) => _PlaceholderScreen(title: 'データインポート'),
+        '/analytics': (context) => _PlaceholderScreen(title: 'アナリティクス'),
+        '/user-management': (context) => _PlaceholderScreen(title: 'ユーザー管理'),
+        '/backup': (context) => _PlaceholderScreen(title: 'バックアップ'),
+        '/maintenance': (context) => _PlaceholderScreen(title: 'メンテナンス'),
       },
       debugShowCheckedModeBanner: false,
     );
@@ -74,6 +87,70 @@ class AuthWrapper extends StatelessWidget {
 
         return LoginScreen();
       },
+    );
+  }
+}
+
+// プレースホルダー画面クラス
+class _PlaceholderScreen extends StatelessWidget {
+  final String title;
+  const _PlaceholderScreen({required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(title),
+        backgroundColor: Colors.blue.shade700,
+        foregroundColor: Colors.white,
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(32),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.construction,
+                size: 64,
+                color: Colors.blue.shade400,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              '$title機能',
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '準備中です',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back),
+              label: const Text('戻る'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -161,6 +238,27 @@ class TestNavigationScreen extends StatelessWidget {
                     builder: (context) =>
                         MainNavigationScreen(userRole: 'driver')),
               ),
+            ),
+            _buildNavCard(
+              context,
+              'レポート',
+              Icons.analytics,
+              Colors.red,
+              () => Navigator.pushNamed(context, '/advanced-reports'),
+            ),
+            _buildNavCard(
+              context,
+              'システム設定',
+              Icons.settings,
+              Colors.grey,
+              () => Navigator.pushNamed(context, '/system-settings'),
+            ),
+            _buildNavCard(
+              context,
+              'データ管理',
+              Icons.storage,
+              Colors.brown,
+              () => Navigator.pushNamed(context, '/data-management'),
             ),
           ],
         ),
@@ -479,5 +577,12 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       setState(() => _isLoading = false);
     }
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 }

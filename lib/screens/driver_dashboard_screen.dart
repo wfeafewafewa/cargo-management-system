@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:html' as html;
+import 'dart:convert';
+import 'dart:typed_data';
 
 class DriverDashboardScreen extends StatefulWidget {
   final String? driverId; // 実際のアプリでは認証から取得
@@ -71,76 +73,19 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
             .collection('drivers')
             .doc(_currentDriverId)
             .set({
-          'name': '田中太郎',
+          'driverName': '田中太郎',
           'phone': '090-1234-5678',
           'email': 'tanaka@example.com',
-          'status': '稼働中',
+          'status': 'active',
+          'vehicleType': '軽トラック',
           'createdAt': FieldValue.serverTimestamp(),
-          'statusUpdatedAt': FieldValue.serverTimestamp(),
           'monthlyEarnings': 280000, // 月間売上（ドライバーに支払われる金額）
         });
 
-        // テスト用配送データを作成
-        await _createTestDeliveries();
+        print('テスト用ドライバーを作成しました: $_currentDriverId');
       }
     } catch (e) {
       print('Test data creation error: $e');
-    }
-  }
-
-  Future<void> _createTestDeliveries() async {
-    final today = DateTime.now();
-    final deliveries = [
-      {
-        'id': 'delivery_001',
-        'pickupLocation': '東京都渋谷区渋谷1-1-1',
-        'deliveryLocation': '東京都新宿区新宿2-2-2',
-        'status': 'assigned',
-        'priority': 'high',
-        'customerName': '山田商事',
-        'customerPhone': '03-1234-5678',
-        'scheduledTime':
-            Timestamp.fromDate(today.add(const Duration(hours: 2))),
-        'estimatedDuration': 45,
-        'driverId': _currentDriverId,
-        'createdAt': FieldValue.serverTimestamp(),
-        // 注意: 受注金額（fee）は意図的に除外
-      },
-      {
-        'id': 'delivery_002',
-        'pickupLocation': '東京都品川区品川3-3-3',
-        'deliveryLocation': '東京都目黒区目黒4-4-4',
-        'status': 'assigned',
-        'priority': 'normal',
-        'customerName': '佐藤物流',
-        'customerPhone': '03-2345-6789',
-        'scheduledTime':
-            Timestamp.fromDate(today.add(const Duration(hours: 4))),
-        'estimatedDuration': 30,
-        'driverId': _currentDriverId,
-        'createdAt': FieldValue.serverTimestamp(),
-      },
-      {
-        'id': 'delivery_003',
-        'pickupLocation': '東京都港区港5-5-5',
-        'deliveryLocation': '東京都千代田区千代田6-6-6',
-        'status': 'assigned',
-        'priority': 'normal',
-        'customerName': '鈴木貿易',
-        'customerPhone': '03-3456-7890',
-        'scheduledTime':
-            Timestamp.fromDate(today.add(const Duration(hours: 6))),
-        'estimatedDuration': 60,
-        'driverId': _currentDriverId,
-        'createdAt': FieldValue.serverTimestamp(),
-      },
-    ];
-
-    for (final delivery in deliveries) {
-      await FirebaseFirestore.instance
-          .collection('deliveries')
-          .doc(delivery['id'] as String)
-          .set(delivery);
     }
   }
 
@@ -155,29 +100,77 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
 
       if (driverDoc.exists) {
         _driverData = driverDoc.data() ?? {};
+        print('ドライバー情報取得成功: $_driverData');
+      } else {
+        print('ドライバー情報が見つかりません: $_currentDriverId');
       }
 
-      // 今日の配送を取得（自身がアサインされたもののみ）
+      // 今日の配送を取得（修正版）
       final today = DateTime.now();
       final startOfDay = DateTime(today.year, today.month, today.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
 
-      final deliveriesQuery = await FirebaseFirestore.instance
+      print('ドライバーID: $_currentDriverId');
+      print('検索範囲: $startOfDay ～ $endOfDay');
+
+      // まず全体のクエリでデバッグ
+      final allDeliveriesQuery =
+          await FirebaseFirestore.instance.collection('deliveries').get();
+
+      print('全配送案件数: ${allDeliveriesQuery.docs.length}');
+
+      // ドライバーでフィルタリング（assignedDriverIdフィールドを使用）
+      final driverDeliveriesQuery = await FirebaseFirestore.instance
           .collection('deliveries')
-          .where('driverId', isEqualTo: _currentDriverId)
-          .where('scheduledTime',
-              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
-          .where('scheduledTime', isLessThan: Timestamp.fromDate(endOfDay))
-          .orderBy('scheduledTime')
+          .where('assignedDriverId', isEqualTo: _currentDriverId)
           .get();
 
-      _todayDeliveries = deliveriesQuery.docs
-          .map((doc) => {'id': doc.id, ...doc.data()})
-          .toList();
+      print('このドライバーの案件数: ${driverDeliveriesQuery.docs.length}');
+
+      // 日付でもフィルタリング（より柔軟に）
+      List<Map<String, dynamic>> filteredDeliveries = [];
+
+      for (final doc in driverDeliveriesQuery.docs) {
+        final data = doc.data();
+        final scheduledTime = data['scheduledTime'] as Timestamp?;
+        final createdAt = data['createdAt'] as Timestamp?;
+
+        // 日付チェックを緩める（scheduledTimeがnullでも含める）
+        bool includeDelivery = false;
+
+        if (scheduledTime == null) {
+          // scheduledTimeがない場合はcreatedAtで判定、それもなければ今日の案件として扱う
+          if (createdAt != null) {
+            final createDate = createdAt.toDate();
+            includeDelivery =
+                createDate.isAfter(startOfDay) && createDate.isBefore(endOfDay);
+          } else {
+            includeDelivery = true; // 作成日もない場合は含める
+          }
+        } else {
+          final deliveryDate = scheduledTime.toDate();
+          // 今日の案件かチェック
+          includeDelivery = deliveryDate.isAfter(startOfDay) &&
+              deliveryDate.isBefore(endOfDay);
+        }
+
+        if (includeDelivery) {
+          filteredDeliveries.add({'id': doc.id, ...data});
+        }
+      }
+
+      print('今日の案件数: ${filteredDeliveries.length}');
+      if (filteredDeliveries.isNotEmpty) {
+        print(
+            '案件詳細: ${filteredDeliveries.map((d) => d['customerName'] ?? d['id']).toList()}');
+      }
+
+      _todayDeliveries = filteredDeliveries;
 
       setState(() => _isLoading = false);
       _animationController.forward();
     } catch (e) {
+      print('データ読み込みエラー詳細: $e');
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -221,7 +214,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
 
   Widget _buildSliverAppBar() {
     final status = _driverData['status'] as String? ?? 'オフライン';
-    final name = _driverData['name'] as String? ?? 'ドライバー';
+    final name = _driverData['driverName'] as String? ?? 'ドライバー';
 
     return SliverAppBar(
       expandedHeight: 200,
@@ -430,16 +423,23 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
             ),
             const SizedBox(height: 16),
             if (_todayDeliveries.isEmpty)
-              const Center(
+              Center(
                 child: Padding(
-                  padding: EdgeInsets.all(32),
+                  padding: const EdgeInsets.all(32),
                   child: Column(
                     children: [
-                      Icon(Icons.local_shipping, size: 64, color: Colors.grey),
-                      SizedBox(height: 16),
-                      Text(
+                      const Icon(Icons.local_shipping,
+                          size: 64, color: Colors.grey),
+                      const SizedBox(height: 16),
+                      const Text(
                         '今日の配送はありません',
                         style: TextStyle(color: Colors.grey),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        '配送案件管理画面で案件を作成し、\nこのドライバーに割り当ててください',
+                        style: TextStyle(color: Colors.grey, fontSize: 12),
+                        textAlign: TextAlign.center,
                       ),
                     ],
                   ),
@@ -455,7 +455,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
   }
 
   Widget _buildDeliveryItem(Map<String, dynamic> delivery) {
-    final status = delivery['status'] as String;
+    final status = delivery['status'] as String? ?? 'assigned';
     final priority = delivery['priority'] as String? ?? 'normal';
     final scheduledTime = (delivery['scheduledTime'] as Timestamp?)?.toDate();
 
@@ -463,14 +463,17 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     IconData statusIcon;
 
     switch (status) {
+      case '完了':
       case 'completed':
         statusColor = Colors.green;
         statusIcon = Icons.check_circle;
         break;
+      case '配送中':
       case 'in_progress':
         statusColor = Colors.blue;
         statusIcon = Icons.local_shipping;
         break;
+      case '待機中':
       case 'assigned':
         statusColor = Colors.orange;
         statusIcon = Icons.assignment;
@@ -483,6 +486,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     Color priorityColor;
     switch (priority) {
       case 'high':
+      case 'urgent':
         priorityColor = Colors.red;
         break;
       case 'normal':
@@ -547,7 +551,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
               const SizedBox(width: 4),
               Expanded(
                 child: Text(
-                  '${delivery['pickupLocation']} → ${delivery['deliveryLocation']}',
+                  '${delivery['pickupLocation'] ?? 'N/A'} → ${delivery['deliveryLocation'] ?? 'N/A'}',
                   style: const TextStyle(fontSize: 14),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -703,17 +707,19 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     try {
       await FirebaseFirestore.instance.collection('work_reports').add({
         'driverId': _currentDriverId,
-        'driverName': _driverData['name'],
+        'driverName': _driverData['driverName'] ?? _driverData['name'],
         'workDate': Timestamp.fromDate(DateTime.now()),
         'workStartTime':
             _workStartTime != null ? Timestamp.fromDate(_workStartTime!) : null,
         'workEndTime': Timestamp.fromDate(DateTime.now()),
         'selectedDelivery': reportData['selectedDelivery'],
-        'unitPrice': reportData['unitPrice'],
+        'feeType': reportData['feeType'],
         'totalAmount': reportData['totalAmount'],
+        'itemCount': reportData['itemCount'],
         'expenseReceipt': reportData['expenseReceipt'],
         'createdAt': FieldValue.serverTimestamp(),
       });
+      print('レポート送信成功');
     } catch (e) {
       print('レポート送信エラー: $e');
     }
@@ -806,23 +812,27 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
   Color _getStatusColor(String status) {
     switch (status) {
       case '稼働中':
+      case 'active':
         return Colors.green;
       case '休憩中':
         return Colors.orange;
       case 'オフライン':
+      case 'inactive':
         return Colors.grey;
       default:
-        return Colors.grey;
+        return Colors.blue;
     }
   }
 
   IconData _getStatusIcon(String status) {
     switch (status) {
       case '稼働中':
+      case 'active':
         return Icons.work;
       case '休憩中':
         return Icons.pause;
       case 'オフライン':
+      case 'inactive':
         return Icons.offline_bolt;
       default:
         return Icons.help;
@@ -837,7 +847,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
   }
 }
 
-// 稼働終了レポートダイアログ
+// 稼働終了レポートダイアログ（自賠責保険証書項目削除版）
 class _WorkReportDialog extends StatefulWidget {
   final DateTime? workStartTime;
   final List<Map<String, dynamic>> todayDeliveries;
@@ -855,19 +865,16 @@ class _WorkReportDialog extends StatefulWidget {
 
 class _WorkReportDialogState extends State<_WorkReportDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _unitPriceController = TextEditingController();
   final _totalAmountController = TextEditingController();
+  final _itemCountController = TextEditingController();
 
   String? _selectedDeliveryId;
+  Map<String, dynamic>? _selectedDeliveryData;
   String _expenseReceipt = ''; // 立替費用の領収書画像
   bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
-    final workDuration = widget.workStartTime != null
-        ? DateTime.now().difference(widget.workStartTime!)
-        : Duration.zero;
-
     return AlertDialog(
       title: Row(
         children: [
@@ -877,7 +884,7 @@ class _WorkReportDialogState extends State<_WorkReportDialog> {
         ],
       ),
       content: SizedBox(
-        width: 500,
+        width: 550,
         height: 600,
         child: Form(
           key: _formKey,
@@ -885,45 +892,7 @@ class _WorkReportDialogState extends State<_WorkReportDialog> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 稼働時間表示
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '稼働時間',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '${workDuration.inHours}時間${workDuration.inMinutes % 60}分',
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue,
-                        ),
-                      ),
-                      if (widget.workStartTime != null)
-                        Text(
-                          '${widget.workStartTime!.hour.toString().padLeft(2, '0')}:${widget.workStartTime!.minute.toString().padLeft(2, '0')} ～ ${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-                          style: const TextStyle(color: Colors.grey),
-                        ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // 必須: 案件選択
+                // 案件選択（必須）
                 const Text(
                   '案件 *',
                   style: TextStyle(
@@ -932,157 +901,99 @@ class _WorkReportDialogState extends State<_WorkReportDialog> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: _selectedDeliveryId,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    hintText: '今日の配送案件から選択',
-                  ),
-                  items: widget.todayDeliveries.map((delivery) {
-                    return DropdownMenuItem<String>(
-                      value: delivery['id'] as String,
-                      child: Text(
-                        '${delivery['customerName']} (${delivery['pickupLocation']})',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedDeliveryId = value;
-                    });
-                  },
-                  validator: (value) => value == null ? '案件を選択してください' : null,
-                ),
 
-                const SizedBox(height: 20),
-
-                // 必須: 支払われるべき単価
-                const Text(
-                  '支払われるべき単価 *',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _unitPriceController,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    hintText: '例: 5000',
-                    suffixText: '円',
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) =>
-                      value?.isEmpty == true ? '必須項目です' : null,
-                  onChanged: (value) {
-                    _updateTotalAmount();
-                  },
-                ),
-
-                const SizedBox(height: 20),
-
-                // 必須: 支払われるべき総額
-                const Text(
-                  '支払われるべき総額 *',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _totalAmountController,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    hintText: '例: 5000',
-                    suffixText: '円',
-                  ),
-                  keyboardType: TextInputType.number,
-                  validator: (value) =>
-                      value?.isEmpty == true ? '必須項目です' : null,
-                ),
-
-                const SizedBox(height: 20),
-
-                // 任意: 画像アップロード（立替費用の領収書）
-                const Text(
-                  '画像アップロード（任意）',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.shade300),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '立替費用の領収書',
-                        style: TextStyle(fontWeight: FontWeight.w500),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: _selectExpenseReceipt,
-                              icon: Icon(_expenseReceipt.isNotEmpty
-                                  ? Icons.edit
-                                  : Icons.file_upload),
-                              label: Text(
-                                  _expenseReceipt.isNotEmpty ? '変更' : '選択'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                              ),
-                            ),
-                          ),
-                          if (_expenseReceipt.isNotEmpty) ...[
+                if (widget.todayDeliveries.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.orange.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.warning,
+                                color: Colors.orange.shade700, size: 20),
                             const SizedBox(width: 8),
-                            IconButton(
-                              onPressed: () {
-                                setState(() {
-                                  _expenseReceipt = '';
-                                });
-                              },
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              tooltip: '削除',
+                            const Text(
+                              '案件が見つかりません',
+                              style: TextStyle(fontWeight: FontWeight.bold),
                             ),
                           ],
-                        ],
-                      ),
-                      if (_expenseReceipt.isNotEmpty) ...[
+                        ),
                         const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.green.shade100,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(Icons.check,
-                                  color: Colors.green.shade700, size: 16),
-                              const SizedBox(width: 4),
-                              const Text(
-                                '画像がアップロードされました',
-                                style: TextStyle(fontSize: 12),
-                              ),
-                            ],
-                          ),
+                        const Text(
+                          '配送案件管理画面で案件を作成し、このドライバーに割り当ててください。',
+                          style: TextStyle(fontSize: 12),
                         ),
                       ],
+                    ),
+                  )
+                else
+                  DropdownButtonFormField<String>(
+                    value: _selectedDeliveryId,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: '今日の配送案件から選択',
+                    ),
+                    isExpanded: true,
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: null,
+                        child: Text('案件を選択してください',
+                            style: TextStyle(color: Colors.grey)),
+                      ),
+                      ...widget.todayDeliveries.map((delivery) {
+                        final customerName =
+                            delivery['customerName'] as String? ?? '不明な顧客';
+                        final pickupLocation =
+                            delivery['pickupLocation'] as String? ?? '不明な場所';
+                        final deliveryId = delivery['id'] as String;
+
+                        return DropdownMenuItem<String>(
+                          value: deliveryId,
+                          child: Container(
+                            constraints: const BoxConstraints(maxHeight: 48),
+                            child: Text(
+                              '$customerName ($pickupLocation)',
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                          ),
+                        );
+                      }).toList(),
                     ],
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedDeliveryId = value;
+                        if (value != null) {
+                          _selectedDeliveryData = widget.todayDeliveries
+                              .firstWhere(
+                                  (delivery) => delivery['id'] == value);
+                        } else {
+                          _selectedDeliveryData = null;
+                        }
+                        // フォームをリセット
+                        _totalAmountController.clear();
+                        _itemCountController.clear();
+                      });
+                    },
+                    validator: (value) => value == null ? '案件を選択してください' : null,
                   ),
-                ),
+
+                const SizedBox(height: 20),
+
+                // 選択された案件の報酬形態に応じた入力フィールドを表示
+                if (_selectedDeliveryData != null) ...[
+                  _buildDynamicInputFields(),
+                  const SizedBox(height: 20),
+                ],
+
+                // 画像アップロードセクション（立替費用の領収書のみ）
+                _buildImageUploadSection(),
               ],
             ),
           ),
@@ -1108,12 +1019,259 @@ class _WorkReportDialogState extends State<_WorkReportDialog> {
     );
   }
 
-  void _updateTotalAmount() {
-    final unitPrice = int.tryParse(_unitPriceController.text) ?? 0;
-    _totalAmountController.text = unitPrice.toString();
+  Widget _buildDynamicInputFields() {
+    final feeType = _selectedDeliveryData!['feeType'] as String? ?? 'daily';
+
+    switch (feeType) {
+      case 'per_item':
+        return _buildItemOnlyFields();
+      case 'daily':
+      case 'hourly':
+        return _buildAmountFields(feeType);
+      default:
+        return _buildAmountFields('daily');
+    }
   }
 
-  void _selectExpenseReceipt() async {
+  Widget _buildItemOnlyFields() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.green.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.green.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.inventory, color: Colors.green.shade700, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                '個数報酬案件',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.green.shade700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            '配達した荷物の個数のみ記録します',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            controller: _itemCountController,
+            decoration: const InputDecoration(
+              labelText: '配達した荷物の数 *',
+              hintText: '例: 15',
+              suffixText: '個',
+              border: OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            validator: (value) {
+              if (value?.isEmpty == true) return '必須項目です';
+              final count = int.tryParse(value!);
+              if (count == null || count <= 0) return '正の数値を入力してください';
+              return null;
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAmountFields(String feeType) {
+    final feeTypeName = feeType == 'daily' ? '日当' : '時給';
+    final hasItemTypes = _selectedDeliveryData!['itemTypes'] != null;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.attach_money, color: Colors.blue.shade700, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                '$feeTypeName案件',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue.shade700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            hasItemTypes ? '支払われる総額と配達個数を記録します' : '支払われる総額を記録します',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(height: 16),
+
+          // 支払われる総額
+          TextFormField(
+            controller: _totalAmountController,
+            decoration: InputDecoration(
+              labelText: '支払われるべき総額 *',
+              hintText: feeType == 'daily' ? '例: 8000' : '例: 1500',
+              suffixText: '円',
+              border: const OutlineInputBorder(),
+            ),
+            keyboardType: TextInputType.number,
+            validator: (value) {
+              if (value?.isEmpty == true) return '必須項目です';
+              final amount = int.tryParse(value!);
+              if (amount == null || amount <= 0) return '正の数値を入力してください';
+              return null;
+            },
+          ),
+
+          // 個数フィールド（個数も含む案件の場合）
+          if (hasItemTypes) ...[
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _itemCountController,
+              decoration: const InputDecoration(
+                labelText: '配達した荷物の数',
+                hintText: '例: 10',
+                suffixText: '個',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+              validator: (value) {
+                if (value?.isNotEmpty == true) {
+                  final count = int.tryParse(value!);
+                  if (count == null || count <= 0) return '正の数値を入力してください';
+                }
+                return null;
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImageUploadSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '画像アップロード（任意）',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // 立替費用の領収書のみ
+        _buildImageUploadCard(
+          title: '立替費用の領収書',
+          imageData: _expenseReceipt,
+          color: Colors.green,
+          onUpload: () => _selectImage('expense'),
+          onDelete: () => setState(() => _expenseReceipt = ''),
+          onView: () => _showImageViewer('立替費用の領収書', _expenseReceipt),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildImageUploadCard({
+    required String title,
+    required String imageData,
+    required Color color,
+    required VoidCallback onUpload,
+    required VoidCallback onDelete,
+    required VoidCallback onView,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: onUpload,
+                  icon: Icon(
+                      imageData.isNotEmpty ? Icons.edit : Icons.file_upload),
+                  label: Text(imageData.isNotEmpty ? '変更' : '選択'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: color,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ),
+              if (imageData.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: onView,
+                  icon: const Icon(Icons.visibility, color: Colors.blue),
+                  tooltip: '閲覧',
+                ),
+                IconButton(
+                  onPressed: () => _showDownloadDialog(title, imageData),
+                  icon: const Icon(Icons.download, color: Colors.purple),
+                  tooltip: 'ダウンロード',
+                ),
+                IconButton(
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete, color: Colors.red),
+                  tooltip: '削除',
+                ),
+              ],
+            ],
+          ),
+          if (imageData.isNotEmpty) _buildUploadedIndicator(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUploadedIndicator() {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.green.shade100,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.check, color: Colors.green.shade700, size: 16),
+          const SizedBox(width: 4),
+          const Text(
+            '画像がアップロードされました',
+            style: TextStyle(fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _selectImage(String type) async {
     final input = html.FileUploadInputElement()
       ..accept = 'image/*'
       ..click();
@@ -1128,7 +1286,9 @@ class _WorkReportDialogState extends State<_WorkReportDialog> {
       final dataUrl = reader.result as String;
 
       setState(() {
-        _expenseReceipt = dataUrl;
+        if (type == 'expense') {
+          _expenseReceipt = dataUrl;
+        }
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1140,19 +1300,183 @@ class _WorkReportDialogState extends State<_WorkReportDialog> {
     }
   }
 
+  void _showImageViewer(String title, String imageData) {
+    showDialog(
+      context: context,
+      builder: (context) => _ImageViewerDialog(
+        title: title,
+        imageData: imageData,
+      ),
+    );
+  }
+
+  void _showDownloadDialog(String title, String imageData) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('$title をダウンロード'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.image, color: Colors.blue),
+              title: const Text('画像ファイルとしてダウンロード'),
+              subtitle: const Text('PNG形式'),
+              onTap: () {
+                Navigator.pop(context);
+                _downloadAsImage(title, imageData);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
+              title: const Text('PDFとしてダウンロード'),
+              subtitle: const Text('PDF形式'),
+              onTap: () {
+                Navigator.pop(context);
+                _downloadAsPDF(title, imageData);
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('キャンセル'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _downloadAsImage(String title, String imageData) {
+    final now = DateTime.now();
+    final dateStr =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+    final timeStr =
+        '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+    final filename = '${title}_${dateStr}_$timeStr.png';
+
+    final anchor = html.AnchorElement(href: imageData)
+      ..download = filename
+      ..click();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$title を画像ファイルとしてダウンロードしました'),
+        backgroundColor: Colors.blue,
+      ),
+    );
+  }
+
+  void _downloadAsPDF(String title, String imageData) {
+    // 簡易PDF生成（実際はpdf packageなどを使用することを推奨）
+    final pdfContent = '''
+%PDF-1.4
+1 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+
+2 0 obj
+<<
+/Type /Pages
+/Kids [3 0 R]
+/Count 1
+>>
+endobj
+
+3 0 obj
+<<
+/Type /Page
+/Parent 2 0 R
+/MediaBox [0 0 612 792]
+/Contents 4 0 R
+>>
+endobj
+
+4 0 obj
+<<
+/Length 44
+>>
+stream
+BT
+/F1 12 Tf
+100 700 Td
+($title) Tj
+ET
+endstream
+endobj
+
+xref
+0 5
+0000000000 65535 f 
+0000000010 00000 n 
+0000000053 00000 n 
+0000000125 00000 n 
+0000000185 00000 n 
+trailer
+<<
+/Size 5
+/Root 1 0 R
+>>
+startxref
+279
+%%EOF
+''';
+
+    final bytes = Uint8List.fromList(utf8.encode(pdfContent));
+    final blob = html.Blob([bytes], 'application/pdf');
+    final url = html.Url.createObjectUrlFromBlob(blob);
+
+    final now = DateTime.now();
+    final dateStr =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+    final timeStr =
+        '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+    final filename = '${title}_${dateStr}_$timeStr.pdf';
+
+    final anchor = html.AnchorElement(href: url)
+      ..download = filename
+      ..click();
+
+    html.Url.revokeObjectUrl(url);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$title をPDFとしてダウンロードしました'),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+
   void _submitReport() {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
 
-    final reportData = {
+    final feeType = _selectedDeliveryData!['feeType'] as String? ?? 'daily';
+
+    final reportData = <String, dynamic>{
       'selectedDelivery': _selectedDeliveryId,
-      'unitPrice': int.tryParse(_unitPriceController.text) ?? 0,
-      'totalAmount': int.tryParse(_totalAmountController.text) ?? 0,
+      'feeType': feeType,
       'expenseReceipt': _expenseReceipt,
     };
 
-    // 少し遅延を入れてリアルな感じを演出
+    // 報酬形態に応じてデータを追加
+    if (feeType == 'per_item') {
+      reportData['itemCount'] = int.tryParse(_itemCountController.text) ?? 0;
+    } else {
+      reportData['totalAmount'] =
+          int.tryParse(_totalAmountController.text) ?? 0;
+
+      final hasItemTypes = _selectedDeliveryData!['itemTypes'] != null;
+      if (hasItemTypes && _itemCountController.text.isNotEmpty) {
+        reportData['itemCount'] = int.tryParse(_itemCountController.text) ?? 0;
+      }
+    }
+
     Future.delayed(const Duration(seconds: 1), () {
       setState(() => _isLoading = false);
       Navigator.pop(context);
@@ -1162,8 +1486,240 @@ class _WorkReportDialogState extends State<_WorkReportDialog> {
 
   @override
   void dispose() {
-    _unitPriceController.dispose();
     _totalAmountController.dispose();
+    _itemCountController.dispose();
     super.dispose();
+  }
+}
+
+// 画像閲覧ダイアログ
+class _ImageViewerDialog extends StatelessWidget {
+  final String title;
+  final String imageData;
+
+  const _ImageViewerDialog({
+    required this.title,
+    required this.imageData,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      child: Container(
+        constraints: const BoxConstraints(
+          maxWidth: 800,
+          maxHeight: 600,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ヘッダー
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(8),
+                  topRight: Radius.circular(8),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.image, color: Colors.blue.shade700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue.shade700,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+
+            // 画像表示エリア
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                child: InteractiveViewer(
+                  panEnabled: true,
+                  scaleEnabled: true,
+                  minScale: 0.5,
+                  maxScale: 3.0,
+                  child: Image.network(
+                    imageData,
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        height: 200,
+                        child: const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.error, size: 48, color: Colors.red),
+                              SizedBox(height: 8),
+                              Text('画像の読み込みに失敗しました'),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+
+            // フッター（操作ボタン）
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(8),
+                  bottomRight: Radius.circular(8),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () =>
+                        _downloadAsImage(title, imageData, context),
+                    icon: const Icon(Icons.download),
+                    label: const Text('画像ダウンロード'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: () => _downloadAsPDF(title, imageData, context),
+                    icon: const Icon(Icons.picture_as_pdf),
+                    label: const Text('PDF出力'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _downloadAsImage(String title, String imageData, BuildContext context) {
+    final now = DateTime.now();
+    final dateStr =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+    final timeStr =
+        '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+    final filename = '${title}_${dateStr}_$timeStr.png';
+
+    final anchor = html.AnchorElement(href: imageData)
+      ..download = filename
+      ..click();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$title を画像ファイルとしてダウンロードしました'),
+        backgroundColor: Colors.blue,
+      ),
+    );
+  }
+
+  void _downloadAsPDF(String title, String imageData, BuildContext context) {
+    // 簡易PDF生成
+    final pdfContent = '''
+%PDF-1.4
+1 0 obj
+<<
+/Type /Catalog
+/Pages 2 0 R
+>>
+endobj
+
+2 0 obj
+<<
+/Type /Pages
+/Kids [3 0 R]
+/Count 1
+>>
+endobj
+
+3 0 obj
+<<
+/Type /Page
+/Parent 2 0 R
+/MediaBox [0 0 612 792]
+/Contents 4 0 R
+>>
+endobj
+
+4 0 obj
+<<
+/Length 44
+>>
+stream
+BT
+/F1 12 Tf
+100 700 Td
+($title) Tj
+ET
+endstream
+endobj
+
+xref
+0 5
+0000000000 65535 f 
+0000000010 00000 n 
+0000000053 00000 n 
+0000000125 00000 n 
+0000000185 00000 n 
+trailer
+<<
+/Size 5
+/Root 1 0 R
+>>
+startxref
+279
+%%EOF
+''';
+
+    final bytes = Uint8List.fromList(utf8.encode(pdfContent));
+    final blob = html.Blob([bytes], 'application/pdf');
+    final url = html.Url.createObjectUrlFromBlob(blob);
+
+    final now = DateTime.now();
+    final dateStr =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+    final timeStr =
+        '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+    final filename = '${title}_${dateStr}_$timeStr.pdf';
+
+    final anchor = html.AnchorElement(href: url)
+      ..download = filename
+      ..click();
+
+    html.Url.revokeObjectUrl(url);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$title をPDFとしてダウンロードしました'),
+        backgroundColor: Colors.red,
+      ),
+    );
   }
 }

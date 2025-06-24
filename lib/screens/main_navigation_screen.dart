@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'admin_dashboard.dart';
-import 'delivery_management_screen.dart';
-import 'driver_management_screen.dart';
+import 'delivery_management_screen.dart' as delivery;
+import 'driver_management_screen.dart' as driver;
 import 'sales_management_unified.dart';
 import 'driver_dashboard_screen.dart';
 import 'role_selection_screen.dart';
@@ -29,8 +29,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   List<Widget> get _adminScreens => [
         AdminDashboard(),
-        DeliveryManagementScreen(),
-        DriverManagementScreen(),
+        delivery.DeliveryManagementScreen(),
+        driver.DriverManagementScreen(),
         SalesManagementUnifiedScreen(),
       ];
 

@@ -1,4 +1,4 @@
-// lib/services/pdf_service.dart - インポート修正版
+// lib/services/pdf_service.dart - 日本語テスト表記削除版
 import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -60,7 +60,7 @@ class PdfService {
     required DateTime endDate,
   }) async {
     try {
-      print('🚀 PDF生成開始 - 日本語表示修正版');
+      print('🚀 PDF生成開始');
       print('📊 配送データ数: ${deliveries.length}');
       print('👤 顧客名: $customerName');
 
@@ -91,7 +91,7 @@ class PdfService {
       final fontStatus = jpFont != null ? '日本語フォント対応' : 'UTF-8フォールバック';
       print('🔤 フォント状態: $fontStatus');
 
-      // PDF生成（日本語対応版）
+      // PDF生成
       pdf.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
@@ -101,68 +101,6 @@ class PdfService {
               : pw.ThemeData(), // デフォルトテーマでUTF-8対応
           build: (pw.Context context) {
             return [
-              // 日本語対応ステータス表示
-              pw.Container(
-                width: double.infinity,
-                padding: const pw.EdgeInsets.all(15),
-                decoration: pw.BoxDecoration(
-                  color: jpFont != null ? PdfColors.green50 : PdfColors.blue50,
-                  border: pw.Border.all(
-                    color:
-                        jpFont != null ? PdfColors.green300 : PdfColors.blue300,
-                    width: 2,
-                  ),
-                  borderRadius: pw.BorderRadius.circular(8),
-                ),
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text(
-                      jpFont != null ? '🇯🇵 日本語フォント対応版' : '🌐 UTF-8対応版（日本語表示）',
-                      style: pw.TextStyle(
-                        fontSize: 14,
-                        fontWeight: pw.FontWeight.bold,
-                        color: jpFont != null
-                            ? PdfColors.green700
-                            : PdfColors.blue700,
-                        font: jpFont,
-                      ),
-                    ),
-                    pw.SizedBox(height: 5),
-                    pw.Text(
-                      '生成日時: ${DateTime.now().toString()}',
-                      style: pw.TextStyle(
-                        fontSize: 10,
-                        color: PdfColors.grey600,
-                        font: jpFont,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              pw.SizedBox(height: 20),
-
-              // 日本語テスト表示
-              if (jpFont != null) ...[
-                pw.Container(
-                  padding: const pw.EdgeInsets.all(12),
-                  decoration: pw.BoxDecoration(
-                    color: PdfColors.green50,
-                    border: pw.Border.all(color: PdfColors.green200),
-                    borderRadius: pw.BorderRadius.circular(8),
-                  ),
-                  child: pw.Text(
-                    '🎉 日本語表示テスト: 山田商事様 配送業務 請求書作成完了',
-                    style: pw.TextStyle(
-                      fontSize: 12,
-                      font: jpFont,
-                      color: PdfColors.green700,
-                    ),
-                  ),
-                ),
-                pw.SizedBox(height: 20),
-              ],
-
               // 請求書ヘッダー
               _buildJapaneseInvoiceHeader(jpFont),
               pw.SizedBox(height: 30),
@@ -195,10 +133,10 @@ class PdfService {
         throw Exception('生成されたPDFが空です');
       }
 
-      print('✅ 日本語PDF生成成功: ${pdfBytes.length} bytes');
+      print('✅ PDF生成成功: ${pdfBytes.length} bytes');
       return pdfBytes;
     } catch (e, stackTrace) {
-      print('❌ 日本語PDF生成エラー: $e');
+      print('❌ PDF生成エラー: $e');
       print('スタックトレース: $stackTrace');
 
       // 緊急フォールバック
@@ -215,7 +153,7 @@ class PdfService {
     required DateTime endDate,
   }) async {
     try {
-      print('🚀 支払通知書生成開始 - 日本語対応版');
+      print('🚀 支払通知書生成開始');
       print('👷 ドライバー名: $driverName');
 
       final pdf = pw.Document();
@@ -247,7 +185,7 @@ class PdfService {
               children: [
                 // ヘッダー
                 pw.Text(
-                  jpFont != null ? '支払通知書' : '支払通知書 / PAYMENT NOTICE',
+                  '支払通知書',
                   style: pw.TextStyle(
                     fontSize: 28,
                     fontWeight: pw.FontWeight.bold,
@@ -259,16 +197,12 @@ class PdfService {
 
                 // 基本情報
                 pw.Text(
-                  jpFont != null
-                      ? '支払対象者: $driverName'
-                      : '支払対象者: $driverName / Payment To: $driverName',
+                  '支払対象者: $driverName',
                   style: pw.TextStyle(fontSize: 16, font: jpFont),
                 ),
                 pw.SizedBox(height: 10),
                 pw.Text(
-                  jpFont != null
-                      ? '期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}'
-                      : '期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}',
+                  '期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}',
                   style: pw.TextStyle(fontSize: 14, font: jpFont),
                 ),
 
@@ -284,9 +218,7 @@ class PdfService {
                       border: pw.Border.all(color: PdfColors.green200),
                     ),
                     child: pw.Text(
-                      jpFont != null
-                          ? '総支払額: ¥${_currencyFormat.format(totalPayment)}'
-                          : '総支払額: ¥${_currencyFormat.format(totalPayment)}',
+                      '総支払額: ¥${_currencyFormat.format(totalPayment)}',
                       style: pw.TextStyle(
                         fontSize: 18,
                         fontWeight: pw.FontWeight.bold,
@@ -341,11 +273,11 @@ class PdfService {
     }
   }
 
-  // 緊急フォールバック（日本語版）
+  // 緊急フォールバック
   static Future<Uint8List> _generateEmergencyJapaneseInvoice(
       String customerName, int totalAmount) async {
     try {
-      print('🚨 緊急フォールバック実行（日本語版）');
+      print('🚨 緊急フォールバック実行');
 
       final pdf = pw.Document();
 
@@ -375,7 +307,7 @@ class PdfService {
                 ),
                 pw.SizedBox(height: 30),
                 pw.Text(
-                  '請求書 / INVOICE',
+                  '請求書',
                   style: pw.TextStyle(
                     fontSize: 32,
                     fontWeight: pw.FontWeight.bold,
@@ -427,7 +359,7 @@ class PdfService {
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
             pw.Text(
-              jpFont != null ? '請求書' : '請求書 / INVOICE',
+              '請求書',
               style: pw.TextStyle(
                 fontSize: 28,
                 fontWeight: pw.FontWeight.bold,
@@ -437,8 +369,9 @@ class PdfService {
             ),
             pw.SizedBox(height: 8),
             pw.Text(
-              'Web Generated (Japanese)',
-              style: pw.TextStyle(fontSize: 12, color: PdfColors.grey600),
+              '発行日: ${_dateFormat.format(DateTime.now())}',
+              style: pw.TextStyle(
+                  fontSize: 12, color: PdfColors.grey600, font: jpFont),
             ),
           ],
         ),
@@ -446,7 +379,7 @@ class PdfService {
           crossAxisAlignment: pw.CrossAxisAlignment.end,
           children: [
             pw.Text(
-              jpFont != null ? '株式会社ダブルエッチ' : '株式会社ダブルエッチ',
+              '株式会社ダブルエッチ',
               style: pw.TextStyle(
                 fontSize: 16,
                 fontWeight: pw.FontWeight.bold,
@@ -475,7 +408,7 @@ class PdfService {
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
           pw.Text(
-            jpFont != null ? '請求先: $customerName' : '請求先: $customerName',
+            '請求先: $customerName',
             style: pw.TextStyle(
               fontSize: 16,
               fontWeight: pw.FontWeight.bold,
@@ -484,9 +417,7 @@ class PdfService {
           ),
           pw.SizedBox(height: 10),
           pw.Text(
-            jpFont != null
-                ? '請求期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}'
-                : '請求期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}',
+            '請求期間: ${_dateFormat.format(startDate)} ～ ${_dateFormat.format(endDate)}',
             style: pw.TextStyle(fontSize: 14, font: jpFont),
           ),
         ],
@@ -504,10 +435,8 @@ class PdfService {
           decoration: const pw.BoxDecoration(color: PdfColors.grey200),
           children: [
             _buildJapaneseTableCell('No.', jpFont, isHeader: true),
-            _buildJapaneseTableCell(jpFont != null ? '案件名' : '案件名', jpFont,
-                isHeader: true),
-            _buildJapaneseTableCell(jpFont != null ? '金額' : '金額', jpFont,
-                isHeader: true),
+            _buildJapaneseTableCell('案件名', jpFont, isHeader: true),
+            _buildJapaneseTableCell('金額', jpFont, isHeader: true),
           ],
         ),
         // データ行
@@ -547,7 +476,7 @@ class PdfService {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(
-                  jpFont != null ? '小計' : '小計',
+                  '小計',
                   style: pw.TextStyle(fontSize: 14, font: jpFont),
                 ),
                 pw.Text('¥${_currencyFormat.format(totalAmount)}',
@@ -559,7 +488,7 @@ class PdfService {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(
-                  jpFont != null ? '消費税(10%)' : '消費税(10%)',
+                  '消費税(10%)',
                   style: pw.TextStyle(fontSize: 14, font: jpFont),
                 ),
                 pw.Text(
@@ -572,7 +501,7 @@ class PdfService {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(
-                  jpFont != null ? '合計金額' : '合計金額',
+                  '合計金額',
                   style: pw.TextStyle(
                     fontSize: 16,
                     fontWeight: pw.FontWeight.bold,
@@ -597,9 +526,7 @@ class PdfService {
 
   static pw.Widget _buildJapaneseInvoiceFooter(pw.Font? jpFont) {
     return pw.Text(
-      jpFont != null
-          ? 'ご不明な点がございましたらお気軽にお問い合わせください。'
-          : 'ご不明な点がございましたらお気軽にお問い合わせください。',
+      'ご不明な点がございましたらお気軽にお問い合わせください。',
       style: pw.TextStyle(fontSize: 10, font: jpFont),
     );
   }
