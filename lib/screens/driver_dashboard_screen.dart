@@ -21,7 +21,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
-  String _currentDriverId = 'test_driver_001'; // テスト用ID
+  String _currentDriverId = 'driver1'; // テスト用ID
   Map<String, dynamic> _driverData = {};
   List<Map<String, dynamic>> _todayDeliveries = [];
   bool _isLoading = true;

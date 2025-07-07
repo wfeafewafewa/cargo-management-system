@@ -695,10 +695,13 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
             if (_selectedDriver == '未割り当て') {
               final assignedDriverId =
                   _safeStringFromData(data, 'assignedDriverId');
-              return assignedDriverId == null || assignedDriverId.isEmpty;
+              final driverName = _safeStringFromData(data, 'driverName');
+              return (assignedDriverId == null || assignedDriverId.isEmpty) &&
+                  (driverName == null || driverName.isEmpty);
             } else {
-              return _safeStringFromData(data, 'assignedDriverId') ==
-                  _selectedDriver;
+              final assignedDriverId =
+                  _safeStringFromData(data, 'assignedDriverId');
+              return assignedDriverId == _selectedDriver;
             }
           } catch (e) {
             print('Error checking driver for doc ${doc.id}: $e');
@@ -712,10 +715,26 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
         filtered = filtered.where((doc) {
           try {
             final data = doc.data() as Map<String, dynamic>;
-            final createdAt = data['createdAt'] as Timestamp?;
-            if (createdAt == null) return false;
+            DateTime? docDate;
 
-            final docDate = createdAt.toDate();
+            // 新機能：scheduledDateがある場合は優先的に使用
+            if (data['scheduledDate'] != null) {
+              final scheduledDate = data['scheduledDate'] as Timestamp?;
+              if (scheduledDate != null) {
+                docDate = scheduledDate.toDate();
+              }
+            }
+
+            // scheduledDateがない場合はcreatedAtを使用（従来通り）
+            if (docDate == null) {
+              final createdAt = data['createdAt'] as Timestamp?;
+              if (createdAt != null) {
+                docDate = createdAt.toDate();
+              }
+            }
+
+            if (docDate == null) return false;
+
             if (_startDate != null && docDate.isBefore(_startDate!))
               return false;
             if (_endDate != null && docDate.isAfter(_endDate!)) return false;
@@ -820,17 +839,36 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
 
   Widget _buildDeliveryCard(String deliveryId, Map<String, dynamic> data) {
     try {
-      // 文字列処理でエラーが起きないよう、より安全な処理
+      // より厳密な安全性チェック
       final safeDeliveryId = deliveryId ?? '';
-      final status = _safeStringFromData(data, 'status') ?? '不明';
+      final status = _safeStringFromData(data, 'status') ?? '待機中'; // デフォルト値を設定
       final pickupLocation =
           _safeStringFromData(data, 'pickupLocation') ?? 'N/A';
       final deliveryLocation =
           _safeStringFromData(data, 'deliveryLocation') ?? 'N/A';
       final customerName = _safeStringFromData(data, 'customerName');
-      final driverName = _safeStringFromData(data, 'driverName');
-      final assignedDriverId = _safeStringFromData(data, 'assignedDriverId');
+
+      // ドライバー情報の安全な取得
+      String? driverName;
+      String? assignedDriverId;
+
+      try {
+        assignedDriverId = _safeStringFromData(data, 'assignedDriverId');
+        driverName = _safeStringFromData(data, 'driverName');
+
+        // デバッグログ（問題の特定用）
+        if (assignedDriverId != null || driverName != null) {
+          print(
+              '案件 $safeDeliveryId: ドライバーID=$assignedDriverId, 名前=$driverName');
+        }
+      } catch (e) {
+        print('ドライバー情報取得エラー (案件 $safeDeliveryId): $e');
+        assignedDriverId = null;
+        driverName = null;
+      }
+
       final createdAt = data['createdAt'] as Timestamp?;
+      final scheduledDate = data['scheduledDate'] as Timestamp?;
       final feeType = data['feeType'] ?? 'daily';
       final isSelected = _selectedDeliveryIds.contains(safeDeliveryId);
 
@@ -919,10 +957,10 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
                               style: const TextStyle(fontSize: 14))),
                     ],
                   ),
-                  // ドライバー情報表示とアサイン機能 - ここを強化
+                  // ドライバー情報表示とアサイン機能 - エラー耐性を強化
                   if (!_showArchived) ...[
                     const SizedBox(height: 12),
-                    _buildDriverSection(
+                    _buildDriverSectionSafe(
                         safeDeliveryId, driverName, assignedDriverId, status),
                   ],
                   // 料金情報表示
@@ -931,10 +969,8 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
                     _buildFeeInfo(data),
                   ],
                   const SizedBox(height: 12),
-                  Text(
-                    _formatTimestamp(createdAt),
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
+                  // 日付情報表示
+                  _buildDateInfo(createdAt, scheduledDate),
                 ],
               ),
             ),
@@ -942,9 +978,117 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
         ),
       );
     } catch (e) {
-      print('Error building delivery card for ${deliveryId ?? 'unknown'}: $e');
-      // エラーが発生した案件は空のコンテナを返す（表示しない）
-      return const SizedBox.shrink();
+      print('カード表示エラー (案件 ${deliveryId ?? 'unknown'}): $e');
+
+      // エラー時でも最低限の情報を表示
+      return Card(
+        margin: const EdgeInsets.only(bottom: 12),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.red.shade50,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.red.shade300),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.warning, color: Colors.red.shade700),
+                  const SizedBox(width: 8),
+                  Text(
+                    'データ表示エラー',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red.shade700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '案件ID: ${safeDocumentIdDisplay(deliveryId ?? 'unknown')}',
+                style: const TextStyle(fontSize: 12),
+              ),
+              Text(
+                'エラー: $e',
+                style: const TextStyle(fontSize: 10, color: Colors.grey),
+              ),
+              const SizedBox(height: 8),
+              ElevatedButton.icon(
+                onPressed: () => _showDeliveryDetails(deliveryId ?? '', data),
+                icon: const Icon(Icons.info, size: 16),
+                label: const Text('詳細確認'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orange,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+  }
+
+  // 新機能：日付情報表示
+  Widget _buildDateInfo(Timestamp? createdAt, Timestamp? scheduledDate) {
+    return Row(
+      children: [
+        // 作成日時
+        Expanded(
+          child: Row(
+            children: [
+              Icon(Icons.access_time, size: 12, color: Colors.grey.shade600),
+              const SizedBox(width: 4),
+              Text(
+                '作成: ${_formatTimestamp(createdAt)}',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+        // 予定日（ある場合のみ表示）
+        if (scheduledDate != null) ...[
+          const SizedBox(width: 12),
+          Row(
+            children: [
+              Icon(Icons.event, size: 12, color: Colors.blue.shade600),
+              const SizedBox(width: 4),
+              Text(
+                '予定: ${_formatScheduledDate(scheduledDate)}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.blue.shade700,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  // 新機能：予定日のフォーマット
+  String _formatScheduledDate(Timestamp timestamp) {
+    final date = timestamp.toDate();
+    final now = DateTime.now();
+    final difference = date.difference(now).inDays;
+
+    final dateStr = '${date.month}/${date.day}';
+
+    if (difference == 0) {
+      return '$dateStr (今日)';
+    } else if (difference == 1) {
+      return '$dateStr (明日)';
+    } else if (difference == -1) {
+      return '$dateStr (昨日)';
+    } else if (difference > 0) {
+      return '$dateStr (+${difference}日)';
+    } else {
+      return '$dateStr (${difference.abs()}日前)';
     }
   }
 
@@ -1110,6 +1254,257 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
             ),
           ],
         ),
+      );
+    }
+  }
+
+  // ★★★ エラー耐性を強化したドライバーセクション ★★★
+  Widget _buildDriverSectionSafe(String deliveryId, String? driverName,
+      String? assignedDriverId, String status) {
+    try {
+      if (driverName != null && driverName.isNotEmpty) {
+        // ドライバーがアサインされている場合
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.green.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.green.shade200),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.drive_eta, size: 18, color: Colors.green.shade700),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'ドライバー: $driverName',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                    if (assignedDriverId != null && assignedDriverId.isNotEmpty)
+                      Text(
+                        'ID: ${assignedDriverId.length > 8 ? assignedDriverId.substring(0, 8) + '...' : assignedDriverId}',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.green.shade600,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // ドライバー操作ボタン
+              if (status == '待機中' || status == '配送中') ...[
+                Container(
+                  margin: const EdgeInsets.only(left: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // ドライバー変更ボタン
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: IconButton(
+                          onPressed: () => _showDriverAssignDialog(
+                              deliveryId, assignedDriverId),
+                          icon: Icon(Icons.edit,
+                              size: 16, color: Colors.blue.shade700),
+                          tooltip: 'ドライバー変更',
+                          padding: const EdgeInsets.all(6),
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      // アサイン解除ボタン
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: IconButton(
+                          onPressed: () => _unassignDriverSafe(deliveryId),
+                          icon: Icon(Icons.person_remove,
+                              size: 16, color: Colors.red.shade700),
+                          tooltip: 'アサイン解除',
+                          padding: const EdgeInsets.all(6),
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else if (status == '完了') ...[
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade100,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '配送完了',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      } else {
+        // ドライバーが未アサインの場合
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.orange.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.orange.shade200),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.person_off, size: 18, color: Colors.orange.shade700),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'ドライバー未割り当て',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.orange.shade700,
+                  ),
+                ),
+              ),
+              // アサインボタン
+              Container(
+                margin: const EdgeInsets.only(left: 8),
+                child: ElevatedButton.icon(
+                  onPressed: () => _showDriverAssignDialog(deliveryId, null),
+                  icon: const Icon(Icons.person_add, size: 16),
+                  label: const Text('アサイン'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange.shade600,
+                    foregroundColor: Colors.white,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.bold),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      print('ドライバーセクション表示エラー (案件 $deliveryId): $e');
+
+      // エラー時の最低限表示
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.warning, size: 18, color: Colors.grey.shade600),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'ドライバー情報エラー',
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => _showDriverAssignDialog(deliveryId, null),
+              icon: const Icon(Icons.person_add, size: 16),
+              label: const Text('再アサイン'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.grey.shade600,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+// ★★★ エラー耐性を強化したアサイン解除 ★★★
+  Future<void> _unassignDriverSafe(String deliveryId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.orange.shade700),
+            const SizedBox(width: 8),
+            const Text('ドライバーアサイン解除'),
+          ],
+        ),
+        content: const Text('この案件からドライバーのアサインを解除しますか？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('解除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // より安全な更新処理
+      final docRef =
+          FirebaseFirestore.instance.collection('deliveries').doc(deliveryId);
+
+      await docRef.update({
+        'assignedDriverId': FieldValue.delete(),
+        'driverName': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      print('アサイン解除完了: $deliveryId'); // デバッグログ
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('ドライバーアサインを解除しました'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    } catch (e) {
+      print('アサイン解除エラー ($deliveryId): $e'); // デバッグログ
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('エラー: $e')),
       );
     }
   }
@@ -1371,7 +1766,7 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
 
       final csvData = <List<String>>[];
 
-      // ヘッダー行
+      // ヘッダー行（予定日列を追加）
       csvData.add([
         'ID',
         '案件名',
@@ -1384,6 +1779,7 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
         '単価',
         '優先度',
         '作成日時',
+        '予定日', // 新機能
         '備考',
       ]);
 
@@ -1391,6 +1787,7 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
       for (final doc in filteredDocs) {
         final data = doc.data() as Map<String, dynamic>;
         final createdAt = data['createdAt'] as Timestamp?;
+        final scheduledDate = data['scheduledDate'] as Timestamp?; // 新機能
 
         csvData.add([
           safeDocumentIdDisplay(doc.id),
@@ -1407,6 +1804,9 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
           createdAt != null
               ? '${createdAt.toDate().year}/${createdAt.toDate().month}/${createdAt.toDate().day} ${createdAt.toDate().hour}:${createdAt.toDate().minute.toString().padLeft(2, '0')}'
               : '',
+          scheduledDate != null
+              ? '${scheduledDate.toDate().year}/${scheduledDate.toDate().month}/${scheduledDate.toDate().day}'
+              : '', // 新機能
           _safeStringFromData(data, 'notes') ?? '',
         ]);
       }
@@ -1647,6 +2047,12 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
               _buildDetailRow('顧客名', data['customerName'] ?? 'N/A'),
               _buildDetailRow('担当ドライバー', data['driverName'] ?? '未割り当て'),
               _buildDetailRow('ステータス', data['status'] ?? 'N/A'),
+              // 新機能：予定日表示
+              if (data['scheduledDate'] != null)
+                _buildDetailRow(
+                    '予定日',
+                    _formatScheduledDateDetail(
+                        data['scheduledDate'] as Timestamp)),
 
               // ドライバーアサイン機能を詳細ダイアログに追加
               if (!_showArchived) ...[
@@ -1752,6 +2158,27 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
     );
   }
 
+  // 新機能：予定日の詳細表示フォーマット
+  String _formatScheduledDateDetail(Timestamp timestamp) {
+    final date = timestamp.toDate();
+    final now = DateTime.now();
+    final difference = date.difference(now).inDays;
+
+    final dateStr = '${date.year}年${date.month}月${date.day}日';
+
+    if (difference == 0) {
+      return '$dateStr (今日)';
+    } else if (difference == 1) {
+      return '$dateStr (明日)';
+    } else if (difference == -1) {
+      return '$dateStr (昨日)';
+    } else if (difference > 0) {
+      return '$dateStr (${difference}日後)';
+    } else {
+      return '$dateStr (${difference.abs()}日前)';
+    }
+  }
+
   List<Widget> _buildItemTypesDetail(Map<String, dynamic> data) {
     final itemTypes = data['itemTypes'] as List<dynamic>?;
     final actualQuantities = data['actualQuantities'] as Map<String, dynamic>?;
@@ -1825,9 +2252,6 @@ class _DeliveryManagementScreenState extends State<DeliveryManagementScreen>
   String _safeDocumentIdDisplay(String id) {
     return safeDocumentIdDisplay(id);
   }
-
-  // 不要になった_safeSubstringを削除
-  // String _safeSubstring(String input, int start, [int? end]) {...}
 
   String _formatTimestamp(Timestamp? timestamp) {
     if (timestamp == null) return '';
@@ -2936,26 +3360,35 @@ class _DriverAssignDialogState extends State<_DriverAssignDialog> {
     setState(() => _isLoading = true);
 
     try {
-      final selectedDriver =
-          _drivers.firstWhere((d) => d['id'] == _selectedDriverId);
+      final selectedDriver = _drivers.firstWhere(
+        (d) => d['id'] == _selectedDriverId,
+        orElse: () => {'id': _selectedDriverId, 'driverName': '不明なドライバー'},
+      );
+
+      // ドライバー名を安全に取得
+      final driverName = selectedDriver['driverName']?.toString() ?? '不明なドライバー';
+
+      print(
+          'アサイン処理 - ドライバーID: $_selectedDriverId, ドライバー名: $driverName'); // デバッグログ
 
       await FirebaseFirestore.instance
           .collection('deliveries')
           .doc(widget.deliveryId)
           .update({
         'assignedDriverId': _selectedDriverId,
-        'driverName': selectedDriver['driverName'],
+        'driverName': driverName,
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('${selectedDriver['driverName']}をアサインしました'),
+          content: Text('${driverName}をアサインしました'),
           backgroundColor: Colors.green,
         ),
       );
     } catch (e) {
+      print('ドライバーアサインエラー: $e'); // デバッグログ
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('エラー: $e')),
       );
@@ -3822,7 +4255,7 @@ class _QuantityInputDialogState extends State<_QuantityInputDialog> {
   }
 }
 
-// 配送案件フォームダイアログ
+// 配送案件フォームダイアログ（日付指定機能付き）
 class _DeliveryFormDialog extends StatefulWidget {
   final String? deliveryId;
   final Map<String, dynamic>? initialData;
@@ -3850,6 +4283,7 @@ class _DeliveryFormDialogState extends State<_DeliveryFormDialog> {
   String _priority = 'normal';
   String _feeType = 'daily';
   DateTime? _deadline;
+  DateTime? _scheduledDate; // 新機能：予定日
   bool _isLoading = false;
 
   List<Map<String, dynamic>> _customers = [];
@@ -3889,6 +4323,11 @@ class _DeliveryFormDialogState extends State<_DeliveryFormDialog> {
 
     if (data['deadline'] != null) {
       _deadline = (data['deadline'] as Timestamp).toDate();
+    }
+
+    // 新機能：予定日の初期化
+    if (data['scheduledDate'] != null) {
+      _scheduledDate = (data['scheduledDate'] as Timestamp).toDate();
     }
   }
 
@@ -3997,6 +4436,11 @@ class _DeliveryFormDialogState extends State<_DeliveryFormDialog> {
                   ),
                 ),
                 const SizedBox(height: 16),
+
+                // 新機能：予定日指定
+                _buildScheduledDateSection(),
+                const SizedBox(height: 16),
+
                 DropdownButtonFormField<String>(
                   value: _feeType,
                   decoration: const InputDecoration(
@@ -4077,6 +4521,150 @@ class _DeliveryFormDialogState extends State<_DeliveryFormDialog> {
         ),
       ],
     );
+  }
+
+  // 新機能：予定日指定セクション
+  Widget _buildScheduledDateSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.purple.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.purple.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.event, color: Colors.purple.shade700, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                '配送予定日（任意）',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.purple.shade700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: _selectScheduledDate,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(8),
+                color: Colors.white,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.calendar_today,
+                    size: 20,
+                    color: Colors.purple.shade700,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _scheduledDate != null
+                          ? '${_scheduledDate!.year}年${_scheduledDate!.month}月${_scheduledDate!.day}日'
+                          : '予定日を選択してください',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: _scheduledDate != null
+                            ? Colors.black87
+                            : Colors.grey.shade600,
+                        fontWeight: _scheduledDate != null
+                            ? FontWeight.w500
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                  if (_scheduledDate != null)
+                    IconButton(
+                      onPressed: () => setState(() => _scheduledDate = null),
+                      icon: Icon(
+                        Icons.clear,
+                        size: 20,
+                        color: Colors.grey.shade600,
+                      ),
+                      tooltip: '予定日をクリア',
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (_scheduledDate != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.8),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    size: 16,
+                    color: Colors.purple.shade600,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _getScheduledDateInfo(_scheduledDate!),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.purple.shade700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // 新機能：予定日選択
+  Future<void> _selectScheduledDate() async {
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: _scheduledDate ?? DateTime.now(),
+      firstDate: DateTime.now().subtract(const Duration(days: 30)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      locale: const Locale('ja', 'JP'),
+      helpText: '配送予定日を選択',
+    );
+
+    if (selectedDate != null) {
+      setState(() {
+        _scheduledDate = selectedDate;
+      });
+    }
+  }
+
+  // 新機能：予定日の情報表示
+  String _getScheduledDateInfo(DateTime date) {
+    final now = DateTime.now();
+    final difference = date.difference(now).inDays;
+
+    if (difference == 0) {
+      return '今日の予定です';
+    } else if (difference == 1) {
+      return '明日の予定です';
+    } else if (difference == -1) {
+      return '昨日の予定でした';
+    } else if (difference > 0) {
+      return '${difference}日後の予定です';
+    } else {
+      return '${difference.abs()}日前の予定でした';
+    }
   }
 
   Widget _buildItemTypesSection() {
@@ -4272,6 +4860,14 @@ class _DeliveryFormDialogState extends State<_DeliveryFormDialog> {
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
+      // 新機能：予定日の保存
+      if (_scheduledDate != null) {
+        data['scheduledDate'] = Timestamp.fromDate(_scheduledDate!);
+      } else if (widget.deliveryId != null) {
+        // 編集時に予定日がクリアされた場合は削除
+        data['scheduledDate'] = FieldValue.delete();
+      }
+
       if (_feeType == 'per_item') {
         data['itemTypes'] = _itemTypes;
         data['unitPrice'] = 0;
@@ -4288,8 +4884,12 @@ class _DeliveryFormDialogState extends State<_DeliveryFormDialog> {
         await FirebaseFirestore.instance.collection('deliveries').add(data);
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('配送案件を追加しました'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text(_scheduledDate != null
+                ? '配送案件を追加しました（予定日: ${_scheduledDate!.month}/${_scheduledDate!.day}）'
+                : '配送案件を追加しました'),
+            backgroundColor: Colors.green,
+          ),
         );
       } else {
         await FirebaseFirestore.instance
@@ -4298,8 +4898,12 @@ class _DeliveryFormDialogState extends State<_DeliveryFormDialog> {
             .update(data);
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('配送案件を更新しました'), backgroundColor: Colors.blue),
+          SnackBar(
+            content: Text(_scheduledDate != null
+                ? '配送案件を更新しました（予定日: ${_scheduledDate!.month}/${_scheduledDate!.day}）'
+                : '配送案件を更新しました'),
+            backgroundColor: Colors.blue,
+          ),
         );
       }
 
@@ -4972,6 +5576,47 @@ class _MonthlyBulkImportDialogState extends State<_MonthlyBulkImportDialog> {
     item['priority'] = _mapPriority(item['優先度'] ?? 'normal');
     item['notes'] = item['備考'] ?? '';
 
+    // 新機能：日付解析（予定日として保存）
+    final dateStr = item['日付']?.toString().trim();
+    if (dateStr != null && dateStr.isNotEmpty) {
+      try {
+        // 簡単な日付解析（YYYY/M/D、YYYY-M-D、M/D形式をサポート）
+        DateTime? parsedDate;
+
+        if (dateStr.contains('/')) {
+          final parts = dateStr.split('/');
+          if (parts.length == 3) {
+            // YYYY/M/D形式
+            final year = int.parse(parts[0]);
+            final month = int.parse(parts[1]);
+            final day = int.parse(parts[2]);
+            parsedDate = DateTime(year, month, day);
+          } else if (parts.length == 2) {
+            // M/D形式（現在の年を使用）
+            final month = int.parse(parts[0]);
+            final day = int.parse(parts[1]);
+            parsedDate = DateTime(_selectedYear, month, day);
+          }
+        } else if (dateStr.contains('-')) {
+          final parts = dateStr.split('-');
+          if (parts.length == 3) {
+            // YYYY-M-D形式
+            final year = int.parse(parts[0]);
+            final month = int.parse(parts[1]);
+            final day = int.parse(parts[2]);
+            parsedDate = DateTime(year, month, day);
+          }
+        }
+
+        if (parsedDate != null) {
+          item['scheduledDate'] = parsedDate;
+        }
+      } catch (e) {
+        // 日付解析に失敗した場合は警告するが処理は続行
+        print('日付解析エラー: $dateStr - $e');
+      }
+    }
+
     if (feeType == 'per_item') {
       final itemTypes = <Map<String, dynamic>>[];
 
@@ -5068,6 +5713,12 @@ class _MonthlyBulkImportDialogState extends State<_MonthlyBulkImportDialog> {
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         };
+
+        // 新機能：予定日の保存
+        if (item['scheduledDate'] != null) {
+          deliveryData['scheduledDate'] =
+              Timestamp.fromDate(item['scheduledDate']);
+        }
 
         if (item['feeType'] == 'per_item' && item['itemTypes'] != null) {
           deliveryData['itemTypes'] = item['itemTypes'];
